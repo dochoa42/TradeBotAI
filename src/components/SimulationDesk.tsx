@@ -496,6 +496,10 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
                   xAxisId="sim-x"
                   yAxisId="sim-y"
                   xKey="time"
+                  openKey="open"
+                  highKey="high"
+                  lowKey="low"
+                  closeKey="close"
                 />
                 {activePriceTime && (
                   <ReferenceLine

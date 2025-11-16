@@ -114,6 +114,10 @@ export const SimulationViewer: React.FC<SimulationViewerProps> = ({
                   xAxisId="playback-x"
                   yAxisId="playback-y"
                   xKey="time"
+                  openKey="open"
+                  highKey="high"
+                  lowKey="low"
+                  closeKey="close"
                 />
                 <Line
                   type="monotone"

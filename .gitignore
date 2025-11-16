@@ -32,3 +32,14 @@ Thumbs.db
 *.zip
 *.7z
 *.rar
+temp.txt
+
+# Local env and secrets
+*.env
+
+# Local data
+backend/data/
+
+# Large / proprietary models (if you care)
+backend/models/*.pkl
+backend/models/*.meta.json

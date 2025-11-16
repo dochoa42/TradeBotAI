@@ -323,7 +323,8 @@ export default function App() {
     const [isLoadingSignals, setIsLoadingSignals] = useState(false);
     const [apiError, setApiError] = useState<string | null>(null);
     const [isDownloadingHistory, setIsDownloadingHistory] = useState(false);
-    const [historyMessage, setHistoryMessage] = useState<string | null>(null);
+  const [historyMessage, setHistoryMessage] = useState<string | null>(null);
+  const [lastBacktestAt, setLastBacktestAt] = useState<string | null>(null);
 
     // Fetch candles when symbol/tf changes
     useEffect(() => {
@@ -395,6 +396,7 @@ export default function App() {
       setAiMetrics(data.metrics);
       setAiFeatureImportance(data.feature_importance);
       setAiConfusion(data.confusion);
+      setLastBacktestAt(new Date().toLocaleString());
     } catch (err: any) {
       console.error(err);
       setApiError(err.message ?? "Backtest error");
@@ -653,6 +655,45 @@ export default function App() {
     { key: "ai", label: "AI" },
     { key: "both", label: "Both" },
   ];
+
+  const equityStart =
+    equityCurveSingle.length > 0 ? equityCurveSingle[0].equity : null;
+  const equityEnd =
+    equityCurveSingle.length > 0
+      ? equityCurveSingle[equityCurveSingle.length - 1].equity
+      : null;
+  const totalPnl =
+    equityStart != null && equityEnd != null ? equityEnd - equityStart : null;
+  const totalPnlPct =
+    equityStart != null && equityStart !== 0 && totalPnl != null
+      ? (totalPnl / equityStart) * 100
+      : null;
+  const tradesForView = summaryForView?.trades ?? [];
+  const totalTrades = tradesForView.length;
+  const totalTradePnl = tradesForView.reduce(
+    (sum, trade) => sum + (trade.pnl ?? 0),
+    0
+  );
+  const avgTradePnl =
+    totalTrades > 0 ? totalTradePnl / totalTrades : null;
+  const sessionMaxDrawdown = metricsSource?.max_drawdown ?? null;
+  const navItems = [
+    "Dashboard",
+    "Backtests",
+    "Simulation",
+    "History",
+    "Settings",
+  ];
+  const apiStatusLabel = candlesError
+    ? "API error"
+    : loadingCandles
+    ? "Syncing"
+    : "API live";
+  const apiStatusColor = candlesError
+    ? "bg-rose-400"
+    : loadingCandles
+    ? "bg-amber-400"
+    : "bg-emerald-400";
 
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
@@ -985,6 +1026,10 @@ export default function App() {
                   xAxisId="main-x"
                   yAxisId="main-y"
                   xKey="time"
+                  openKey="open"
+                  highKey="high"
+                  lowKey="low"
+                  closeKey="close"
                 />
                 {/* SMA */}
                 {showSMA && (
