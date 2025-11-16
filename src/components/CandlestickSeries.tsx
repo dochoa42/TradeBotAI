@@ -5,174 +5,148 @@ export type CandlestickSeriesProps = {
   data: any[];
   xAxisId?: string;
   yAxisId?: string;
-  xKey: string;
+  xKey?: string;
   openKey?: string;
   highKey?: string;
   lowKey?: string;
-  closeKey: string;
+  closeKey?: string;
   bullColor?: string;
   bearColor?: string;
-  candleWidth?: number;
-};
-
-const toNumber = (value: any): number | null => {
-  if (value == null) return null;
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-};
-
-const candidates = (primary?: string, fallback: string[] = []) => {
-  const set = new Set<string>();
-  if (primary) set.add(primary);
-  fallback.forEach((k) => set.add(k));
-  return Array.from(set);
-};
-
-const pickValue = (entry: any, keys: string[]): number | null => {
-  if (!entry) return null;
-  for (const key of keys) {
-    if (key in entry) {
-      const num = toNumber(entry[key]);
-      if (num != null) {
-        return num;
-      }
-    }
-  }
-  return null;
+  candleWidth?: number; // optional override
 };
 
 export function CandlestickSeries({
   data,
-  xAxisId = "main-x",
-  yAxisId = "main-y",
+  xAxisId,
+  yAxisId,
   xKey = "time",
   openKey = "open",
   highKey = "high",
   lowKey = "low",
   closeKey = "close",
-  bullColor = "rgba(34,197,94,0.9)",
-  bearColor = "rgba(249,115,129,0.9)",
+  bullColor = "#22c55e", // neon green
+  bearColor = "#fb7185", // neon pink
   candleWidth,
 }: CandlestickSeriesProps) {
-  if (!Array.isArray(data) || data.length === 0) {
-    return null;
-  }
+  if (!data || data.length === 0) return null;
+  console.log("Candles debug sample:", data.slice(0, 3));
 
   return (
     <Customized
       component={(chartProps: any) => {
-        const xAxis = chartProps?.xAxisMap?.[xAxisId];
-        const yAxis = chartProps?.yAxisMap?.[yAxisId];
-        if (
-          !xAxis ||
-          !yAxis ||
-          typeof xAxis.scale !== "function" ||
-          typeof yAxis.scale !== "function"
-        ) {
+        const { xAxisMap, yAxisMap } = chartProps || {};
+
+        const allX = xAxisMap ? (Object.values(xAxisMap) as any[]) : [];
+        const allY = yAxisMap ? (Object.values(yAxisMap) as any[]) : [];
+
+        const xAxis =
+          (xAxisId && xAxisMap && xAxisMap[xAxisId]) || allX[0] || null;
+        const yAxis =
+          (yAxisId && yAxisMap && yAxisMap[yAxisId]) || allY[0] || null;
+
+        if (!xAxis || !yAxis || !xAxis.scale || !yAxis.scale) {
+          // If we can't resolve axes, bail out quietly.
           return null;
         }
 
         const xScale = xAxis.scale;
         const yScale = yAxis.scale;
-        const autoWidth =
-          typeof xScale.bandwidth === "function"
-            ? Number(xScale.bandwidth()) * 0.7
-            : undefined;
-        const resolvedWidth = Math.max(
-          1,
-          candleWidth ?? (autoWidth && Number.isFinite(autoWidth) ? autoWidth : 5)
-        );
 
-        const openKeys = candidates(openKey, ["open", "o"]);
-        const closeKeys = candidates(closeKey, ["close", "c", "price", "last"]);
-        const highKeys = candidates(highKey, ["high", "h"]);
-        const lowKeys = candidates(lowKey, ["low", "l"]);
+        const isBand =
+          typeof (xScale as any).bandwidth === "function" &&
+          (xScale as any).bandwidth() > 0;
+        const bandWidth = isBand ? (xScale as any).bandwidth() : 0;
 
-        let previousClose: number | null = null;
+        // Fallback width if we don't have a band scale
+        let defaultStep = 8;
+        if (!isBand && data.length > 1) {
+          const first = data[0]?.[xKey];
+          const second = data[1]?.[xKey];
+          const x1 = Number(xScale(first));
+          const x2 = Number(xScale(second));
+          if (Number.isFinite(x1) && Number.isFinite(x2) && x1 !== x2) {
+            defaultStep = Math.abs(x2 - x1);
+          }
+        }
+
+        const bodyWidth =
+          candleWidth ??
+          Math.max(3, (isBand ? bandWidth : defaultStep) * 0.6);
 
         return (
           <Layer className="candlestick-series">
             {data.map((entry: any, idx: number) => {
-              if (!entry) return null;
+              const xValue = entry?.[xKey];
 
-              const rawX = entry[xKey];
-              if (rawX == null) {
-                return null;
-              }
-
-              const close = pickValue(entry, closeKeys);
-              if (close == null) {
-                return null;
-              }
-
-              let open = pickValue(entry, openKeys);
-              if (open == null) {
-                open = previousClose ?? close;
-              }
-
-              let high = pickValue(entry, highKeys);
-              let low = pickValue(entry, lowKeys);
-
-              if (high == null) {
-                high = Math.max(open, close);
-              }
-              if (low == null) {
-                low = Math.min(open, close);
-              }
-
-              // ensure wick envelopes body even if data was noisy
-              const wickHigh = Math.max(high, open, close);
-              const wickLow = Math.min(low, open, close);
-
-              const scaledX = Number(xScale(rawX));
-              const scaledOpen = Number(yScale(open));
-              const scaledClose = Number(yScale(close));
-              const scaledHigh = Number(yScale(wickHigh));
-              const scaledLow = Number(yScale(wickLow));
+              const open = Number(entry?.[openKey]);
+              const high = Number(entry?.[highKey]);
+              const low = Number(entry?.[lowKey]);
+              const close = Number(entry?.[closeKey]);
 
               if (
-                [scaledX, scaledOpen, scaledClose, scaledHigh, scaledLow].some(
-                  (val) => !Number.isFinite(val)
+                xValue == null ||
+                [open, high, low, close].some(
+                  (v) => v == null || Number.isNaN(v)
                 )
               ) {
-                previousClose = close;
                 return null;
               }
 
-              const isBull = close >= open;
-              const color = isBull ? bullColor : bearColor;
-              const bodyTop = Math.min(scaledOpen, scaledClose);
-              const bodyHeight = Math.max(
-                1,
-                Math.abs(scaledClose - scaledOpen)
-              );
-              const rectX = scaledX - resolvedWidth / 2;
+              let cx = Number(xScale(xValue));
 
-              previousClose = close;
+              if (!Number.isFinite(cx)) {
+                // As a last resort, fall back to index positioning
+                cx = isBand
+                  ? (xScale as any)(idx) + bandWidth / 2
+                  : idx * defaultStep;
+              } else if (isBand) {
+                // Center within the band
+                cx = cx + bandWidth / 2;
+              }
+
+              const yOpen = Number(yScale(open));
+              const yClose = Number(yScale(close));
+              const yHigh = Number(yScale(high));
+              const yLow = Number(yScale(low));
+
+              if (
+                [yOpen, yClose, yHigh, yLow].some(
+                  (v) => !Number.isFinite(v)
+                )
+              ) {
+                return null;
+              }
+
+              const bullish = close >= open;
+              const color = bullish ? bullColor : bearColor;
+
+              const bodyTop = Math.min(yOpen, yClose);
+              const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
+              const bodyX = cx - bodyWidth / 2;
 
               return (
                 <g key={`candle-${idx}`}>
+                  {/* Wick */}
                   <line
-                    x1={scaledX}
-                    x2={scaledX}
-                    y1={scaledHigh}
-                    y2={scaledLow}
+                    x1={cx}
+                    x2={cx}
+                    y1={yHigh}
+                    y2={yLow}
                     stroke={color}
-                    strokeWidth={1.2}
+                    strokeWidth={1.3}
                     opacity={0.9}
-                    strokeLinecap="round"
                   />
+                  {/* Body */}
                   <rect
-                    x={rectX}
+                    x={bodyX}
                     y={bodyTop}
-                    width={resolvedWidth}
+                    width={bodyWidth}
                     height={bodyHeight}
                     fill={color}
                     stroke={color}
                     strokeWidth={1}
-                    opacity={0.9}
-                    rx={1.2}
-                    ry={1.2}
+                    opacity={0.95}
+                    rx={1}
                   />
                 </g>
               );

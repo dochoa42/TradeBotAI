@@ -1021,6 +1021,17 @@ export default function App() {
                 <Tooltip
                   contentStyle={{ background: "#0a0a0a", border: "1px solid #333" }}
                 />
+                {/* Bollinger Bands */}
+                {showBB && (
+                  <Area
+                    type="monotone"
+                    dataKey="bbU"
+                    strokeOpacity={0}
+                    fillOpacity={0.1}
+                    xAxisId="main-x"
+                    yAxisId="main-y"
+                  />
+                )}
                 <CandlestickSeries
                   data={chartData}
                   xAxisId="main-x"
@@ -1038,17 +1049,6 @@ export default function App() {
                     dataKey="sma"
                     dot={false}
                     strokeWidth={1}
-                    xAxisId="main-x"
-                    yAxisId="main-y"
-                  />
-                )}
-                {/* Bollinger Bands */}
-                {showBB && (
-                  <Area
-                    type="monotone"
-                    dataKey="bbU"
-                    strokeOpacity={0}
-                    fillOpacity={0.1}
                     xAxisId="main-x"
                     yAxisId="main-y"
                   />
