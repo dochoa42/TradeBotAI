@@ -1,0 +1,12 @@
+# Node
+node_modules/
+dist/
+
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

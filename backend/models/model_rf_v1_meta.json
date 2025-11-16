@@ -1,0 +1,86 @@
+{
+  "model_type": "RandomForestClassifier",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "trained_at": "2025-11-13T01:38:46.162851Z",
+  "horizon": 5,
+  "threshold": 0.0015,
+  "feature_cols": [
+    "ret_1",
+    "vol_10",
+    "sma_20",
+    "sma_50",
+    "close_over_sma20",
+    "close_over_sma50",
+    "rsi_14",
+    "vol_z",
+    "hour",
+    "minute"
+  ],
+  "n_samples": 877,
+  "test_accuracy": 0.7657142857142857,
+  "confusion_matrix_order": [
+    -1,
+    0,
+    1
+  ],
+  "confusion_matrix": [
+    [
+      2,
+      20,
+      0
+    ],
+    [
+      0,
+      123,
+      1
+    ],
+    [
+      0,
+      20,
+      9
+    ]
+  ],
+  "feature_importance": [
+    {
+      "name": "ret_1",
+      "importance": 0.0265089345386974
+    },
+    {
+      "name": "vol_10",
+      "importance": 0.09181814139487393
+    },
+    {
+      "name": "sma_20",
+      "importance": 0.12518580684767355
+    },
+    {
+      "name": "sma_50",
+      "importance": 0.10449591377780466
+    },
+    {
+      "name": "close_over_sma20",
+      "importance": 0.1516687713291543
+    },
+    {
+      "name": "close_over_sma50",
+      "importance": 0.19597018827944832
+    },
+    {
+      "name": "rsi_14",
+      "importance": 0.09164553736351912
+    },
+    {
+      "name": "vol_z",
+      "importance": 0.0646761911219462
+    },
+    {
+      "name": "hour",
+      "importance": 0.058490010862393964
+    },
+    {
+      "name": "minute",
+      "importance": 0.08954050448448857
+    }
+  ]
+}

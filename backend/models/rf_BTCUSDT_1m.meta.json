@@ -1,0 +1,34 @@
+{
+  "model_type": "RandomForestClassifier",
+  "model_version": "rf_BTCUSDT_1m",
+  "symbol_trained": "BTCUSDT",
+  "interval_trained": "1m",
+  "feature_cols": [
+    "sma20",
+    "sma50",
+    "std20",
+    "upper_bb",
+    "lower_bb",
+    "rsi14",
+    "close_over_sma20",
+    "vol_z"
+  ],
+  "confusion_matrix": [
+    [
+      7,
+      30,
+      15
+    ],
+    [
+      29,
+      45,
+      37
+    ],
+    [
+      10,
+      34,
+      30
+    ]
+  ],
+  "trained_at": "2025-11-15T05:24:37.957216+00:00"
+}
