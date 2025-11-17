@@ -1,14 +1,5 @@
-import React, { useEffect, useRef } from "react";
-import {
-  candlestickSeries,
-  createChart,
-  createSeriesMarkers,
-  type CandlestickData,
-  type ISeriesApi,
-  type ISeriesMarkersPluginApi,
-  type SeriesMarker,
-  type UTCTimestamp,
-} from "lightweight-charts";
+﻿import React, { useEffect, useRef } from "react";
+import { createChart, ColorType } from "lightweight-charts";
 
 export type TvCandlePoint = {
   time: number | string | Date;
@@ -23,7 +14,7 @@ export type TvCandleData = TvCandlePoint;
 
 export type TvMarkerData = {
   time: number | string | Date;
-  position?: "aboveBar" | "belowBar";
+  position?: "aboveBar" | "belowBar" | "inBar";
   color?: string;
   shape?: "arrowUp" | "arrowDown" | "circle" | "square";
   text?: string;
@@ -35,11 +26,18 @@ type TvCandlesProps = {
   className?: string;
 };
 
-const normalizeTimestamp = (value?: number | string | Date): number | null => {
+/**
+ * Normalize anything (number / string / Date) into a Unix timestamp in seconds.
+ * Returns null if the value can't be parsed.
+ */
+const normalizeTimestamp = (
+  value?: number | string | Date,
+): number | null => {
   if (value == null) return null;
 
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return null;
+    // if it's milliseconds, convert to seconds
     return value > 2_000_000_000 ? Math.floor(value / 1000) : Math.floor(value);
   }
 
@@ -59,22 +57,28 @@ const normalizeTimestamp = (value?: number | string | Date): number | null => {
 };
 
 const getPointTimestamp = (point: TvCandleData): number | null =>
-  normalizeTimestamp(point.time) ?? normalizeTimestamp(point.ts);
+  normalizeTimestamp(point.ts ?? point.time);
 
 const baseContainerClass = "w-full h-full rounded-2xl bg-slate-950";
 
-const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) => {
+const TvCandles: React.FC<TvCandlesProps> = ({
+  data,
+  markers = [],
+  className,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const markersPluginRef = useRef<ISeriesMarkersPluginApi<UTCTimestamp> | null>(null);
 
+  // Typed as any on purpose to avoid fighting older lightweight-charts typings
+  const chartRef = useRef<any | null>(null);
+  const seriesRef = useRef<any | null>(null);
+
+  // create chart + series once
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const chart = createChart(containerRef.current, {
+    const chart: any = createChart(containerRef.current, {
       layout: {
-        background: { type: "solid", color: "#020617" },
+        background: { type: ColorType.Solid, color: "#020617" },
         textColor: "#e5e7eb",
       },
       grid: {
@@ -91,26 +95,46 @@ const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) 
       },
       crosshair: { mode: 0 },
       autoSize: true,
-    }) as ReturnType<typeof createChart>;
-
-    const candleSeries = chart.addSeries(candlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
     });
+
+    // Support both APIs:
+    //  - chart.addCandlestickSeries(...)
+    //  - chart.addSeries("Candlestick", ...)
+    let candleSeries: any;
+
+    if (typeof chart.addCandlestickSeries === "function") {
+      candleSeries = chart.addCandlestickSeries({
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+        borderVisible: false,
+        borderUpColor: "#22c55e",
+        borderDownColor: "#ef4444",
+      });
+    } else if (typeof chart.addSeries === "function") {
+      // Fallback for builds that only expose addSeries
+      candleSeries = chart.addSeries("Candlestick", {
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+        borderVisible: false,
+        borderUpColor: "#22c55e",
+        borderDownColor: "#ef4444",
+      });
+    } else {
+      console.error(
+        "[TvCandles] Chart instance has neither addCandlestickSeries nor addSeries.",
+        chart,
+      );
+      return;
+    }
 
     chartRef.current = chart;
     seriesRef.current = candleSeries;
-    markersPluginRef.current = createSeriesMarkers(candleSeries, []);
 
-    if (containerRef.current) {
-      const { clientWidth, clientHeight } = containerRef.current;
-      chart.applyOptions({ width: clientWidth, height: clientHeight });
-    }
-
+    // auto-resize
     const resizeObserver = new ResizeObserver((entries) => {
       if (!chartRef.current) return;
       for (const entry of entries) {
@@ -121,79 +145,88 @@ const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) 
 
     resizeObserver.observe(containerRef.current);
 
+    // initial size
+    const { clientWidth, clientHeight } = containerRef.current;
+    chart.applyOptions({ width: clientWidth, height: clientHeight });
+
     return () => {
       resizeObserver.disconnect();
-      markersPluginRef.current?.detach();
-      markersPluginRef.current = null;
-      chartRef.current?.remove();
+      if (chartRef.current) {
+        chartRef.current.remove();
+      }
       chartRef.current = null;
       seriesRef.current = null;
     };
   }, []);
 
+  // update candlestick data
   useEffect(() => {
-    console.log("[TvCandles] raw data length:", data?.length);
+    if (!seriesRef.current || !chartRef.current) return;
 
-    if (!seriesRef.current || !data || data.length === 0) return;
+    if (!data || data.length === 0) {
+      seriesRef.current.setData([]);
+      return;
+    }
 
-    const mapped: CandlestickData[] = data
+    const mapped = data
       .filter(
         (d) =>
           Number.isFinite(Number(d.open)) &&
           Number.isFinite(Number(d.high)) &&
           Number.isFinite(Number(d.low)) &&
           Number.isFinite(Number(d.close)) &&
-          getPointTimestamp(d) !== null
+          getPointTimestamp(d) !== null,
       )
       .map((d) => {
         const ts = getPointTimestamp(d);
         if (ts == null) return null;
 
         return {
-          time: ts as CandlestickData["time"],
+          time: ts,
           open: Number(d.open),
           high: Number(d.high),
           low: Number(d.low),
           close: Number(d.close),
         };
       })
-      .filter((point): point is CandlestickData => Boolean(point));
-
-    console.log("[TvCandles] mapped candles sample:", mapped[0]);
-
-    if (mapped.length === 0) return;
+      .filter((d) => d !== null) as any[];
 
     seriesRef.current.setData(mapped);
-    chartRef.current?.timeScale().fitContent();
+    chartRef.current.timeScale().fitContent();
   }, [data]);
 
+  // update markers
   useEffect(() => {
-    if (!markersPluginRef.current) return;
+    if (!seriesRef.current) return;
 
     if (!markers.length) {
-      markersPluginRef.current.setMarkers([]);
+      seriesRef.current.setMarkers([]);
       return;
     }
 
-    const normalizedMarkers = markers
-      .map<SeriesMarker<UTCTimestamp> | null>((marker) => {
+    const mappedMarkers = markers
+      .map((marker) => {
         const ts = normalizeTimestamp(marker.time);
         if (ts == null) return null;
 
         return {
-          time: ts as UTCTimestamp,
+          time: ts,
           position: marker.position ?? "aboveBar",
-          color: marker.color ?? "#22c55e",
+          color:
+            marker.color ??
+            (marker.shape === "arrowDown" ? "#ef4444" : "#22c55e"),
           shape: marker.shape ?? "circle",
           text: marker.text,
         };
       })
-      .filter((marker): marker is SeriesMarker<UTCTimestamp> => Boolean(marker));
+      .filter((m) => m !== null) as any[];
 
-    markersPluginRef.current.setMarkers(normalizedMarkers);
+    seriesRef.current.setMarkers(mappedMarkers);
   }, [markers]);
 
-  const mergedClassName = className ? `${baseContainerClass} ${className}` : baseContainerClass;
+  const mergedClassName = className
+    ? `${baseContainerClass} ${className}`
+    : baseContainerClass;
 
   return (
     <div
