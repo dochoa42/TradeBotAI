@@ -1,16 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  ComposedChart,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-  ReferenceLine,
-} from "recharts";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { SimulationViewer } from "./SimulationViewer";
-import CandlestickSeries from "./CandlestickSeries";
+import TvCandles, { TvCandleData } from "./TvCandles";
 
 const API_BASE =
   (import.meta as any).env?.VITE_API_URL ??
@@ -44,6 +35,7 @@ type SimulationState = {
 
 type TradeMarker = {
   time: any;
+  ts?: number;
   price: number;
   side: "long" | "short";
 };
@@ -225,10 +217,22 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
       : [];
   const visiblePriceData =
     visibleBars > 0 ? simPriceSeries.slice(0, visibleBars) : [];
-  const activePriceTime =
-    visiblePriceData.length > 0
-      ? visiblePriceData[visiblePriceData.length - 1].time
-      : null;
+  const visibleOhlc = useMemo<TvCandleData[]>(
+    () =>
+      visiblePriceData.map((bar, idx) => ({
+        time:
+          typeof bar?.ts === "number"
+            ? bar.ts
+            : typeof bar?.time === "number"
+            ? bar.time
+            : idx,
+        open: Number(bar?.open) || 0,
+        high: Number(bar?.high) || 0,
+        low: Number(bar?.low) || 0,
+        close: Number(bar?.close) || 0,
+      })),
+    [visiblePriceData]
+  );
 
   const currentEquity = currentPoint?.equity ?? startingBalance;
 
@@ -276,6 +280,7 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
 
       tradeMarkers.push({
         time: bar.time,
+        ts: typeof bar.ts === "number" ? bar.ts : undefined,
         price: close,
         side,
       });
@@ -471,47 +476,7 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
           </p>
         ) : (
           <div className="mt-2 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={visiblePriceData}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 10, fill: "#aaa" }}
-                  minTickGap={24}
-                  xAxisId="sim-x"
-                />
-                <YAxis
-                  tick={{ fontSize: 10, fill: "#aaa" }}
-                  domain={["auto", "auto"]}
-                  yAxisId="sim-y"
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "#0a0a0a",
-                    border: "1px solid #333",
-                  }}
-                />
-                <CandlestickSeries
-                  data={visiblePriceData}
-                  xAxisId="sim-x"
-                  yAxisId="sim-y"
-                  xKey="time"
-                  openKey="open"
-                  highKey="high"
-                  lowKey="low"
-                  closeKey="close"
-                />
-                {activePriceTime && (
-                  <ReferenceLine
-                    x={activePriceTime}
-                    stroke="#38bdf8"
-                    strokeWidth={2}
-                    xAxisId="sim-x"
-                    yAxisId="sim-y"
-                  />
-                )}
-              </ComposedChart>
-            </ResponsiveContainer>
+            <TvCandles data={visibleOhlc} />
           </div>
         )}
       </div>

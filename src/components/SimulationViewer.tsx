@@ -1,22 +1,10 @@
-import React from "react";
-import {
-  ComposedChart,
-  Line,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  Brush,
-  ReferenceLine,
-  ReferenceDot,
-} from "recharts";
-import CandlestickSeries from "./CandlestickSeries";
+import React, { useMemo } from "react";
+import TvCandles, { TvCandleData, TvMarkerData } from "./TvCandles";
 
 type TradeMarker = {
-  time: any;            // same type as data[i].time
-  price: number;        // y-position (usually close price)
+  time: any; // same type as data[i].time
+  ts?: number;
+  price: number; // y-position (usually close price)
   side: "long" | "short";
 };
 
@@ -33,12 +21,51 @@ export const SimulationViewer: React.FC<SimulationViewerProps> = ({
   onClose,
   markers = [],
 }) => {
-
   const hasData = data && data.length > 0;
-  const clampedStep = hasData
-    ? Math.max(0, Math.min(step, data.length - 1))
-    : 0;
-  const activeX = hasData ? data[clampedStep].time : undefined;
+  const playbackOhlc = useMemo<TvCandleData[]>(() => {
+    if (!hasData) return [];
+    return data.map((entry: any, idx: number) => ({
+      time:
+        typeof entry?.ts === "number"
+          ? entry.ts
+          : typeof entry?.time === "number"
+          ? entry.time
+          : idx,
+      open: Number(entry?.open) || 0,
+      high: Number(entry?.high) || 0,
+      low: Number(entry?.low) || 0,
+      close: Number(entry?.close) || 0,
+    }));
+  }, [data, hasData]);
+
+  const playbackMarkers = useMemo<TvMarkerData[]>(() => {
+    if (!markers.length || !hasData) return [];
+    const timeLookup = new Map<any, number>();
+    data.forEach((entry: any) => {
+      if (entry?.time != null && typeof entry?.ts === "number") {
+        timeLookup.set(entry.time, entry.ts);
+      }
+    });
+    return markers
+      .map((m) => {
+        const ts =
+          typeof m.ts === "number"
+            ? m.ts
+            : typeof m.time === "number"
+            ? m.time
+            : timeLookup.get(m.time);
+        if (ts == null) return null;
+        const isLong = m.side === "long";
+        return {
+          time: ts,
+          position: isLong ? "belowBar" : "aboveBar",
+          color: isLong ? "#f97316" : "#fb7185",
+          shape: isLong ? "arrowUp" : "arrowDown",
+          text: isLong ? "L" : "S",
+        };
+      })
+      .filter(Boolean) as TvMarkerData[];
+  }, [markers, data, hasData]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
@@ -70,99 +97,9 @@ export const SimulationViewer: React.FC<SimulationViewerProps> = ({
               main console first.
             </p>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 12, fill: "#aaa" }}
-                  minTickGap={24}
-                  xAxisId="playback-x"
-                />
-                <YAxis
-                  tick={{ fontSize: 12, fill: "#aaa" }}
-                  domain={["auto", "auto"]}
-                  yAxisId="playback-y"
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "#0a0a0a",
-                    border: "1px solid #333",
-                  }}
-                />
-
-                {/* Bollinger band cloud (if present) */}
-                <Area
-                  type="monotone"
-                  dataKey="bbU"
-                  strokeOpacity={0}
-                  fillOpacity={0.05}
-                  xAxisId="playback-x"
-                  yAxisId="playback-y"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="bbL"
-                  strokeOpacity={0}
-                  fillOpacity={0.05}
-                  xAxisId="playback-x"
-                  yAxisId="playback-y"
-                />
-
-                <CandlestickSeries
-                  data={data}
-                  xAxisId="playback-x"
-                  yAxisId="playback-y"
-                  xKey="time"
-                  openKey="open"
-                  highKey="high"
-                  lowKey="low"
-                  closeKey="close"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="sma"
-                  dot={false}
-                  strokeWidth={1}
-                  xAxisId="playback-x"
-                  yAxisId="playback-y"
-                />
-
-                {/* Playback marker */}
-                {activeX && (
-                  <ReferenceLine
-                    x={activeX}
-                    stroke="#38bdf8"
-                    strokeWidth={2}
-                    xAxisId="playback-x"
-                    yAxisId="playback-y"
-                  />
-                )}
-
-                {/* Trade markers */}
-                {markers.map((m, idx) => (
-                    <ReferenceDot
-                        key={idx}
-                        x={m.time}
-                        y={m.price}
-                        r={6}
-                        strokeWidth={2}
-                        stroke={m.side === "long" ? "#f97316" : "#fb7185"} // bright orange / pink
-                        fill={m.side === "long" ? "#f97316" : "#fb7185"}
-                        xAxisId="playback-x"
-                        yAxisId="playback-y"
-                    />
-                ))}
-                {/* Zoom brush */}
-                <Brush
-                  dataKey="time"
-                  height={24}
-                  travellerWidth={12}
-                  xAxisId="playback-x"
-                />
-
-              </ComposedChart>
-            </ResponsiveContainer>
+            <div className="w-full h-full">
+              <TvCandles data={playbackOhlc} markers={playbackMarkers} />
+            </div>
           )}
         </div>
       </div>

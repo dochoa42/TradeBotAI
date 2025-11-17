@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SimulationDesk } from "./components/SimulationDesk";
-import CandlestickSeries from "./components/CandlestickSeries";
+import TvCandles, { TvCandlePoint, TvMarkerData } from "./components/TvCandles";
 import {
   ResponsiveContainer,
   LineChart,
@@ -17,8 +17,6 @@ import {
   Pie,
   Cell,
   Legend,
-  ComposedChart,
-  Scatter,
 } from "recharts";
 
 // =============================================
@@ -33,6 +31,13 @@ type Candle = {
   low: number;
   close: number;
   volume: number;
+};
+
+type ChartPoint = TvCandlePoint & {
+  volume: number;
+  sma: number;
+  bbU: number;
+  bbL: number;
 };
 
 // --- AI / backtest types ---
@@ -493,8 +498,8 @@ export default function App() {
   }
 
   // ----- Derived series / indicators -----
-  const chartData = useMemo(() => {
-    if (!candles?.length) return [] as any[];
+  const chartData = useMemo<ChartPoint[]>(() => {
+    if (!candles?.length) return [];
     const close = candles.map((c) => c.close);
     const sm = sma(close, smaPeriod);
     const sd = stddev(close, smaPeriod, sm);
@@ -519,7 +524,7 @@ export default function App() {
     }));
   }, [candles]);
 
-  const aiSignalMarkers = useMemo(() => {
+  const tvAiMarkers = useMemo<TvMarkerData[]>(() => {
     if (!showAiSignals || !aiSignals.length || !candles.length) return [];
 
     const byTs = new Map(aiSignals.map((s) => [s.ts, s.signal]));
@@ -528,13 +533,16 @@ export default function App() {
       .map((c) => {
         const sig = byTs.get(c.ts);
         if (!sig || sig === "flat") return null;
+        const isLong = sig === "long";
         return {
-          ts: c.ts,
-          close: c.close,
-          signal: sig,
+          time: c.ts,
+          position: isLong ? "belowBar" : "aboveBar",
+          color: isLong ? "#22c55e" : "#ef4444",
+          shape: isLong ? "arrowUp" : "arrowDown",
+          text: isLong ? "L" : "S",
         };
       })
-      .filter(Boolean) as { ts: number; close: number; signal: "long" | "short" }[];
+      .filter(Boolean) as TvMarkerData[];
   }, [showAiSignals, aiSignals, candles]);
 
   const metrics = useMemo(() => basicMetrics(candles), [candles]);
@@ -1000,94 +1008,8 @@ export default function App() {
               )}
             </div>
           </div>
-          <div className="h-[360px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={chartData}
-                margin={{ top: 10, right: 20, bottom: 0, left: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 12, fill: "#aaa" }}
-                  minTickGap={28}
-                  xAxisId="main-x"
-                />
-                <YAxis
-                  tick={{ fontSize: 12, fill: "#aaa" }}
-                  domain={["auto", "auto"]}
-                  yAxisId="main-y"
-                />
-                <Tooltip
-                  contentStyle={{ background: "#0a0a0a", border: "1px solid #333" }}
-                />
-                {/* Bollinger Bands */}
-                {showBB && (
-                  <Area
-                    type="monotone"
-                    dataKey="bbU"
-                    strokeOpacity={0}
-                    fillOpacity={0.1}
-                    xAxisId="main-x"
-                    yAxisId="main-y"
-                  />
-                )}
-                <CandlestickSeries
-                  data={chartData}
-                  xAxisId="main-x"
-                  yAxisId="main-y"
-                  xKey="time"
-                  openKey="open"
-                  highKey="high"
-                  lowKey="low"
-                  closeKey="close"
-                />
-                {/* SMA */}
-                {showSMA && (
-                  <Line
-                    type="monotone"
-                    dataKey="sma"
-                    dot={false}
-                    strokeWidth={1}
-                    xAxisId="main-x"
-                    yAxisId="main-y"
-                  />
-                )}
-                {showBB && (
-                  <Area
-                    type="monotone"
-                    dataKey="bbL"
-                    strokeOpacity={0}
-                    fillOpacity={0.1}
-                    xAxisId="main-x"
-                    yAxisId="main-y"
-                  />
-                )}
-
-                {/* AI signal markers */}
-                {aiSignalMarkers.length > 0 && (
-                  <Scatter
-                    data={aiSignalMarkers}
-                    dataKey="close"
-                    name="AI Signals"
-                    xAxisId="main-x"
-                    yAxisId="main-y"
-                    shape={(props: any) => {
-                      const s = (props.payload as any).signal as "long" | "short";
-                      const isBuy = s === "long";
-                      const color = isBuy ? "#22c55e" : "#ef4444";
-                      return (
-                        <path
-                          d={isBuy ? "M0,-6 L6,6 L-6,6 Z" : "M0,6 L6,-6 L-6,-6 Z"}
-                          transform={`translate(${props.cx},${props.cy})`}
-                          fill={color}
-                        />
-                      );
-                    }}
-                  />
-                )}
-              </ComposedChart>
-            </ResponsiveContainer>
+          <div className="h-72">
+            <TvCandles data={chartData} markers={showAiSignals ? tvAiMarkers : []} />
           </div>
         </div>
 
