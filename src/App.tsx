@@ -287,6 +287,7 @@ function buildDemoCandles(n = 200): Candle[] {
 // UI
 // =============================================
 export default function App() {
+  console.log("App rendering...");
   // Core state
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
   const [tf, setTf] = useState<Interval>("1m");
