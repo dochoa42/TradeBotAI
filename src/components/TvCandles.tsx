@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useRef } from "react";
-import { createChart, ColorType, type CandlestickData } from "lightweight-charts";
+import { createChart, ColorType } from "lightweight-charts";
 
 export type TvCandlePoint = {
   time: number | string | Date;
@@ -26,9 +26,9 @@ type TvCandlesProps = {
   className?: string;
 };
 
-// very small, known-good demo series so we can prove the chart works
-const FALLBACK_SERIES: CandlestickData[] = (() => {
-  const base = Math.floor(Date.now() / 1000) - 60 * 5; // 5 minutes ago, seconds
+// tiny fallback demo series so we always see something
+const FALLBACK_SERIES: any[] = (() => {
+  const base = Math.floor(Date.now() / 1000) - 60 * 5;
   const mk = (i: number, o: number, h: number, l: number, c: number) => ({
     time: base + i * 60,
     open: o,
@@ -50,7 +50,7 @@ const normalizeTimestamp = (value?: number | string | Date): number | null => {
 
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return null;
-    // if it looks like milliseconds, convert to seconds
+    // if it looks like ms, convert to s
     return value > 2_000_000_000 ? Math.floor(value / 1000) : Math.floor(value);
   }
 
@@ -69,91 +69,109 @@ const normalizeTimestamp = (value?: number | string | Date): number | null => {
   return null;
 };
 
-// original priority: prefer `time` (string/number), fallback to `ts`
 const getPointTimestamp = (point: TvCandleData): number | null =>
   normalizeTimestamp(point.time) ?? normalizeTimestamp(point.ts);
 
 const baseContainerClass = "w-full h-full rounded-2xl bg-slate-950";
 
-const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) => {
+const TvCandles: React.FC<TvCandlesProps> = ({
+  data,
+  markers = [],
+  className,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<any | null>(null);
   const seriesRef = useRef<any | null>(null);
 
-  // create chart + series once
+  // create chart only once, when container has a real size
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    try {
-      const chart: any = createChart(containerRef.current, {
-        layout: {
-          background: { type: ColorType.Solid, color: "#020617" },
-          textColor: "#e5e7eb",
-        },
-        grid: {
-          vertLines: { color: "#020617" },
-          horzLines: { color: "#020617" },
-        },
-        rightPriceScale: { borderColor: "#1f2937" },
-        timeScale: {
-          borderColor: "#1f2937",
-          fixLeftEdge: true,
-          fixRightEdge: true,
-          rightOffset: 5,
-          barSpacing: 8,
-        },
-        crosshair: { mode: 0 },
-        autoSize: true,
-      });
+    let chart: any = null;
+    let series: any = null;
+    let created = false;
 
-      const candleSeries =
-        typeof chart.addCandlestickSeries === "function"
-          ? chart.addCandlestickSeries({
-              upColor: "#22c55e",
-              downColor: "#ef4444",
-              wickUpColor: "#22c55e",
-              wickDownColor: "#ef4444",
-              borderUpColor: "#22c55e",
-              borderDownColor: "#ef4444",
-            })
-          : chart.addSeries("Candlestick", {
-              upColor: "#22c55e",
-              downColor: "#ef4444",
-              wickUpColor: "#22c55e",
-              wickDownColor: "#ef4444",
-              borderUpColor: "#22c55e",
-              borderDownColor: "#ef4444",
-            });
-
-      chartRef.current = chart;
-      seriesRef.current = candleSeries;
-
-      if (containerRef.current) {
-        const { clientWidth, clientHeight } = containerRef.current;
-        chart.applyOptions({ width: clientWidth, height: clientHeight });
+    const initChart = (width: number, height: number) => {
+      if (created) return;
+      if (width <= 0 || height <= 0) {
+        // wait for a real size
+        return;
       }
 
-      const resizeObserver = new ResizeObserver((entries) => {
-        if (!chartRef.current) return;
-        for (const entry of entries) {
-          const { width, height } = entry.contentRect;
+      try {
+        console.log("[TvCandles] initChart with size", width, height);
+        chart = createChart(container, { width, height });
+
+        chart.applyOptions({
+          layout: {
+            background: { type: ColorType.Solid, color: "#020617" },
+            textColor: "#e5e7eb",
+          },
+          grid: {
+            vertLines: { color: "#020617" },
+            horzLines: { color: "#020617" },
+          },
+          rightPriceScale: { borderColor: "#1f2937" },
+          timeScale: {
+            borderColor: "#1f2937",
+            rightOffset: 5,
+            barSpacing: 8,
+          },
+          crosshair: { mode: 0 },
+        });
+
+        series =
+          typeof chart.addCandlestickSeries === "function"
+            ? chart.addCandlestickSeries({
+                upColor: "#22c55e",
+                downColor: "#ef4444",
+                wickUpColor: "#22c55e",
+                wickDownColor: "#ef4444",
+                borderUpColor: "#22c55e",
+                borderDownColor: "#ef4444",
+              })
+            : chart.addSeries("Candlestick", {
+                upColor: "#22c55e",
+                downColor: "#ef4444",
+                wickUpColor: "#22c55e",
+                wickDownColor: "#ef4444",
+                borderUpColor: "#22c55e",
+                borderDownColor: "#ef4444",
+              });
+
+        chartRef.current = chart;
+        seriesRef.current = series;
+        created = true;
+      } catch (err) {
+        console.error("[TvCandles] chart creation failed in initChart", err);
+      }
+    };
+
+    const rect = container.getBoundingClientRect();
+    initChart(rect.width, rect.height);
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (!created) {
+          initChart(width, height);
+        } else if (chartRef.current) {
           chartRef.current.applyOptions({ width, height });
         }
-      });
+      }
+    });
 
-      resizeObserver.observe(containerRef.current);
+    resizeObserver.observe(container);
 
-      return () => {
-        resizeObserver.disconnect();
-        if (chartRef.current) {
-          chartRef.current.remove();
-        }
-        chartRef.current = null;
-        seriesRef.current = null;
-      };
-    } catch (err) {
-      console.error("[TvCandles] chart creation failed", err);
-    }
+    return () => {
+      resizeObserver.disconnect();
+      if (chart) {
+        chart.remove();
+      }
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
   }, []);
 
   // candles
@@ -161,7 +179,7 @@ const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) 
     if (!seriesRef.current || !chartRef.current) return;
 
     try {
-      let mapped: CandlestickData[] = [];
+      let mapped: any[] = [];
 
       if (data && data.length) {
         mapped = data
@@ -183,15 +201,9 @@ const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) 
               return null;
             }
 
-            return {
-              time: ts as CandlestickData["time"],
-              open,
-              high,
-              low,
-              close,
-            };
+            return { time: ts, open, high, low, close };
           })
-          .filter((p): p is CandlestickData => Boolean(p));
+          .filter(Boolean) as any[];
 
         mapped.sort((a, b) => (a.time as number) - (b.time as number));
       }
@@ -200,7 +212,7 @@ const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) 
         console.warn(
           "[TvCandles] No valid candle data mapped, using fallback demo series.",
         );
-        mapped = FALLBACK_SERIES;
+        mapped = FALLBACK_SERIES.slice();
       }
 
       console.log("[TvCandles] Using candle sample:", mapped.slice(0, 5));
@@ -244,7 +256,9 @@ const TvCandles: React.FC<TvCandlesProps> = ({ data, markers = [], className }) 
         })
         .filter(Boolean) as any[];
 
-      normalizedMarkers.sort((a, b) => (a.time as number) - (b.time as number));
+      normalizedMarkers.sort(
+        (a, b) => (a.time as number) - (b.time as number),
+      );
 
       seriesRef.current.setMarkers(normalizedMarkers);
     } catch (err) {
