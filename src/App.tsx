@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SimulationDesk } from "./components/SimulationDesk";
+import ChartPanel from "./components/ChartPanel";
 import TvCandles, { TvCandlePoint, TvMarkerData } from "./components/TvCandles";
 import {
   ResponsiveContainer,
@@ -22,7 +23,7 @@ import {
 // =============================================
 // Types & Constants
 // =============================================
-type Interval = "1m" | "5m" | "1h" | "1d";
+type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 
 type Candle = {
   ts: number;
@@ -171,6 +172,15 @@ const ALLOWED_SYMBOLS = [
   "XRPUSDT",
 ] as const;
 
+const TIMEFRAME_OPTIONS: Interval[] = [
+  "1m",
+  "5m",
+  "15m",
+  "1h",
+  "4h",
+  "1d",
+];
+
 
 // =============================================
 // Utilities
@@ -303,6 +313,7 @@ export default function App() {
 
   // Indicators toggles
   const [showSMA, setShowSMA] = useState<boolean>(true);
+  const [showEMA, setShowEMA] = useState<boolean>(false);
   const [showBB, setShowBB] = useState<boolean>(true);
   const smaPeriod = 20;
   const bbStd = 2;
@@ -536,7 +547,7 @@ export default function App() {
         if (!sig || sig === "flat") return null;
         const isLong = sig === "long";
         return {
-          time: c.ts,
+          ts: c.ts,
           position: isLong ? "belowBar" : "aboveBar",
           color: isLong ? "#22c55e" : "#ef4444",
           shape: isLong ? "arrowUp" : "arrowDown",
@@ -547,6 +558,22 @@ export default function App() {
   }, [showAiSignals, aiSignals, candles]);
 
   const metrics = useMemo(() => basicMetrics(candles), [candles]);
+
+  const lastPrice = candles.length ? candles[candles.length - 1].close : null;
+  const prevPrice = candles.length > 1 ? candles[candles.length - 2].close : null;
+  const priceChangePct =
+    lastPrice != null && prevPrice && prevPrice !== 0
+      ? ((lastPrice - prevPrice) / prevPrice) * 100
+      : null;
+
+  const chartStatus = {
+    lastPrice,
+    changePct: priceChangePct,
+    bars: candles.length,
+    interval: tf,
+    isLoading: loadingCandles,
+    error: candlesError,
+  };
 
   const volumeData = useMemo(
     () =>
@@ -749,8 +776,8 @@ export default function App() {
           <div className="text-xs uppercase tracking-wider opacity-70 mb-2">
             Timeframe
           </div>
-          <div className="grid grid-cols-4 gap-2">
-            {(["1m", "5m", "1h", "1d"] as Interval[]).map((t) => (
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {TIMEFRAME_OPTIONS.map((t) => (
               <button
                 key={t}
                 onClick={() => setTf(t)}
@@ -994,25 +1021,27 @@ export default function App() {
       {/* Main Charts */}
       <section className="max-w-7xl mx-auto px-4 mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
         {/* Candles + AI signals */}
-        <div className="xl:col-span-2 p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="font-semibold">
-              {symbol} · {tf} Candles
-            </h2>
-            <div className="text-xs opacity-70">
-              {loadingCandles ? (
-                "Loading…"
-              ) : candlesError ? (
-                <span className="text-rose-400">{candlesError}</span>
-              ) : (
-                `${candles.length} bars`
-              )}
-            </div>
-          </div>
-          <div className="h-72">
-            <TvCandles data={chartData} markers={showAiSignals ? tvAiMarkers : []} />
-          </div>
-        </div>
+        <ChartPanel
+          className="xl:col-span-2"
+          symbol={symbol}
+          symbols={ALLOWED_SYMBOLS}
+          onSymbolChange={setSymbol}
+          interval={tf}
+          timeframeOptions={TIMEFRAME_OPTIONS}
+          onIntervalChange={(next) => setTf(next as Interval)}
+          indicators={[
+            { key: "sma", label: "SMA", active: showSMA, onToggle: () => setShowSMA((prev) => !prev) },
+            { key: "ema", label: "EMA", active: showEMA, onToggle: () => setShowEMA((prev) => !prev) },
+            { key: "bb", label: "Boll", active: showBB, onToggle: () => setShowBB((prev) => !prev) },
+          ]}
+          status={chartStatus}
+        >
+          <TvCandles
+            data={chartData}
+            markers={showAiSignals ? tvAiMarkers : []}
+            className="h-full"
+          />
+        </ChartPanel>
 
         {/* Win/Loss donut (demo metrics) */}
         <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">

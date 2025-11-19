@@ -55,7 +55,7 @@ function tsToSeconds(point: { ts?: number; time?: any }): number | null {
   return null;
 }
 
-const baseContainerClass = "w-full h-full rounded-2xl bg-slate-950";
+const baseContainerClass = "w-full h-full min-h-[320px]";
 
 // --- component -------------------------------------------------------
 
@@ -73,7 +73,27 @@ const TvCandles: React.FC<TvCandlesProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    const chart: any = createChart(container);
+    const { clientWidth, clientHeight } = container;
+    const chart: any = createChart(container, {
+      width: clientWidth || 600,
+      height: clientHeight || 360,
+      layout: {
+        background: { color: "transparent" },
+        textColor: "#cbd5f5",
+      },
+      grid: {
+        vertLines: { color: "rgba(148, 163, 184, 0.12)" },
+        horzLines: { color: "rgba(148, 163, 184, 0.12)" },
+      },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: "#1f2937" },
+      timeScale: {
+        borderColor: "#1f2937",
+        rightOffset: 10,
+        barSpacing: 8,
+      },
+    });
+
     const series: any = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -87,18 +107,19 @@ const TvCandles: React.FC<TvCandlesProps> = ({
     seriesRef.current = series;
 
     const handleResize = () => {
-      const { clientWidth, clientHeight } = container;
-      if (clientWidth && clientHeight) {
-        chart.applyOptions({ width: clientWidth, height: clientHeight });
+      const { clientWidth: width, clientHeight: height } = container;
+      if (width && height) {
+        chart.applyOptions({ width, height });
       }
     };
 
-    // initial size
-    handleResize();
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(container);
     window.addEventListener("resize", handleResize);
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
