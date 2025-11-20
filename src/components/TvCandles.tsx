@@ -1,5 +1,15 @@
 ﻿import React, { useEffect, useRef } from "react";
-import { createChart, CandlestickSeries } from "lightweight-charts";
+import {
+  createChart,
+  CandlestickSeries,
+  LineSeries,
+  type CandlestickData,
+  type IChartApi,
+  type ISeriesApi,
+  type LineData,
+  type SeriesMarker,
+  type Time,
+} from "lightweight-charts";
 
 export type TvCandlePoint = {
   ts?: number;                    // unix ms from backend
@@ -15,7 +25,7 @@ export type TvCandleData = TvCandlePoint;
 export type TvMarkerData = {
   ts?: number;
   time?: number | string | Date;
-  price: number;
+  price?: number;
   side?: "long" | "short";
   position?: "aboveBar" | "belowBar";
   color?: string;
@@ -23,15 +33,33 @@ export type TvMarkerData = {
   text?: string;
 };
 
+export type TvOverlayLine = {
+  id: string;
+  color: string;
+  data: {
+    ts?: number;
+    time?: number | string | Date;
+    value: number;
+  }[];
+};
+
 type TvCandlesProps = {
   data: TvCandleData[];
   markers?: TvMarkerData[];
+  overlays?: TvOverlayLine[];
   className?: string;
+};
+
+type CandleSeriesWithMarkers = ISeriesApi<"Candlestick"> & {
+  setMarkers(markers: SeriesMarker<Time>[]): void;
 };
 
 // --- helpers ---------------------------------------------------------
 
-function tsToSeconds(point: { ts?: number; time?: any }): number | null {
+function tsToSeconds(point: {
+  ts?: number;
+  time?: number | string | Date;
+}): number | null {
   // Prefer backend ts (unix ms) if present
   if (typeof point.ts === "number" && Number.isFinite(point.ts)) {
     return Math.floor(point.ts / 1000);
@@ -62,11 +90,13 @@ const baseContainerClass = "w-full h-full min-h-[320px]";
 const TvCandles: React.FC<TvCandlesProps> = ({
   data,
   markers = [],
+  overlays = [],
   className,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<any | null>(null);
-  const seriesRef = useRef<any | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<CandleSeriesWithMarkers | null>(null);
+  const overlaySeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
 
   // 1) create / destroy chart once
   useEffect(() => {
@@ -74,7 +104,7 @@ const TvCandles: React.FC<TvCandlesProps> = ({
     if (!container) return;
 
     const { clientWidth, clientHeight } = container;
-    const chart: any = createChart(container, {
+    const chart = createChart(container, {
       width: clientWidth || 600,
       height: clientHeight || 360,
       layout: {
@@ -94,14 +124,14 @@ const TvCandles: React.FC<TvCandlesProps> = ({
       },
     });
 
-    const series: any = chart.addSeries(CandlestickSeries, {
+    const series = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444",
       borderUpColor: "#22c55e",
       borderDownColor: "#ef4444",
-    });
+    }) as CandleSeriesWithMarkers;
 
     chartRef.current = chart;
     seriesRef.current = series;
@@ -120,6 +150,10 @@ const TvCandles: React.FC<TvCandlesProps> = ({
     return () => {
       window.removeEventListener("resize", handleResize);
       resizeObserver.disconnect();
+      overlaySeriesRef.current.forEach((line) => {
+        chart.removeSeries(line);
+      });
+      overlaySeriesRef.current.clear();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -130,28 +164,34 @@ const TvCandles: React.FC<TvCandlesProps> = ({
   useEffect(() => {
     if (!seriesRef.current) return;
 
-    const mapped: any[] = (data || [])
-      .map((d) => {
-        const t = tsToSeconds(d);
-        if (t == null) return null;
+    const mapped: CandlestickData<Time>[] = [];
 
-        const open = Number(d.open);
-        const high = Number(d.high);
-        const low = Number(d.low);
-        const close = Number(d.close);
+    (data || []).forEach((d) => {
+      const t = tsToSeconds(d);
+      if (t == null) return;
 
-        if (
-          !Number.isFinite(open) ||
-          !Number.isFinite(high) ||
-          !Number.isFinite(low) ||
-          !Number.isFinite(close)
-        ) {
-          return null;
-        }
+      const open = Number(d.open);
+      const high = Number(d.high);
+      const low = Number(d.low);
+      const close = Number(d.close);
 
-        return { time: t, open, high, low, close };
-      })
-      .filter(Boolean) as any[];
+      if (
+        !Number.isFinite(open) ||
+        !Number.isFinite(high) ||
+        !Number.isFinite(low) ||
+        !Number.isFinite(close)
+      ) {
+        return;
+      }
+
+      mapped.push({
+        time: t as Time,
+        open,
+        high,
+        low,
+        close,
+      });
+    });
 
     // lightweight-charts requires ascending time
     mapped.sort((a, b) => (a.time as number) - (b.time as number));
@@ -174,26 +214,81 @@ const TvCandles: React.FC<TvCandlesProps> = ({
       return;
     }
 
-    const mappedMarkers: any[] = markers
-      .map((m) => {
-        const t = tsToSeconds(m);
-        if (t == null) return null;
-        return {
-          time: t,
-          position: m.position ?? "aboveBar",
-          color:
-            m.color ??
-            (m.side === "short" || m.shape === "arrowDown" ? "#ef4444" : "#22c55e"),
-          shape: m.shape ?? (m.side === "short" ? "arrowDown" : "arrowUp"),
-          text: m.text,
-        };
-      })
-      .filter(Boolean) as any[];
+    const mappedMarkers: SeriesMarker<Time>[] = [];
+
+    markers.forEach((m) => {
+      const t = tsToSeconds(m);
+      if (t == null) return;
+      mappedMarkers.push({
+        time: t as Time,
+        position: m.position ?? "aboveBar",
+        color:
+          m.color ??
+          (m.side === "short" || m.shape === "arrowDown" ? "#ef4444" : "#22c55e"),
+        shape: m.shape ?? (m.side === "short" ? "arrowDown" : "arrowUp"),
+        text: m.text,
+      });
+    });
 
     mappedMarkers.sort((a, b) => (a.time as number) - (b.time as number));
 
     seriesRef.current.setMarkers(mappedMarkers);
   }, [markers]);
+
+  // 4) overlay line series (SMA, Bollinger, etc.)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const nextOverlays = overlays ?? [];
+    const seriesMap = overlaySeriesRef.current;
+    const nextIds = new Set(nextOverlays.map((o) => o.id));
+
+    const staleIds: string[] = [];
+    seriesMap.forEach((_series, id) => {
+      if (!nextIds.has(id)) {
+        staleIds.push(id);
+      }
+    });
+
+    staleIds.forEach((id) => {
+      const line = seriesMap.get(id);
+      if (line) {
+        chart.removeSeries(line);
+        seriesMap.delete(id);
+      }
+    });
+
+    if (!nextOverlays.length) {
+      return;
+    }
+
+    nextOverlays.forEach((overlay) => {
+      if (!overlay || !overlay.id) return;
+
+      let line = seriesMap.get(overlay.id);
+      if (!line) {
+        line = chart.addSeries(LineSeries, {
+          color: overlay.color,
+          lineWidth: 2,
+        });
+        seriesMap.set(overlay.id, line);
+      } else {
+        line.applyOptions({ color: overlay.color });
+      }
+
+      const mappedData: LineData<Time>[] = [];
+      (overlay.data || []).forEach((point) => {
+        const t = tsToSeconds(point);
+        const value = Number(point.value);
+        if (t == null || !Number.isFinite(value)) return;
+        mappedData.push({ time: t as Time, value });
+      });
+
+      mappedData.sort((a, b) => (a.time as number) - (b.time as number));
+      line.setData(mappedData);
+    });
+  }, [overlays]);
 
   const mergedClassName = className
     ? `${baseContainerClass} ${className}`

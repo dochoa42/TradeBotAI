@@ -27,16 +27,18 @@ type ChartPanelProps = {
   status?: ChartPanelStatus;
   children: React.ReactNode;
   className?: string;
+  canFullscreen?: boolean;
+  onOpenFullscreen?: () => void;
 };
 
 const baseCardClass =
-  "rounded-2xl border border-slate-800 bg-slate-950/80 shadow-xl p-3 flex flex-col gap-3";
+  "rounded-2xl border border-slate-800 bg-slate-950/80 shadow-xl p-2.5 flex flex-col gap-3";
 
 const toolbarButtonClasses =
-  "px-3 py-1.5 rounded-xl text-xs font-semibold transition border border-slate-800 hover:border-slate-600";
+  "px-2.5 py-1.5 rounded-xl text-xs font-semibold transition border border-slate-800 hover:border-slate-600";
 
 const indicatorButtonClasses =
-  "px-2.5 py-1 rounded-lg text-xs font-semibold transition border border-slate-800 hover:border-slate-600";
+  "px-2.5 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-800 hover:border-slate-600";
 
 const ChartPanel: React.FC<ChartPanelProps> = ({
   symbol,
@@ -49,6 +51,8 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
   status,
   children,
   className,
+  canFullscreen,
+  onOpenFullscreen,
 }) => {
   const mergedClassName = className
     ? `${baseCardClass} ${className}`
@@ -122,10 +126,19 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
               ))}
             </div>
           )}
+          {canFullscreen && onOpenFullscreen && (
+            <button
+              type="button"
+              onClick={onOpenFullscreen}
+              className="ml-2 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 hover:border-slate-500"
+            >
+              Fullscreen
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="text-xs text-slate-400 flex flex-wrap items-center gap-4 border border-slate-900 rounded-xl px-3 py-2 bg-slate-950/60">
+      <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-4 border border-slate-900 rounded-xl px-3 py-1.5 bg-slate-950/60">
         <span className="font-semibold text-slate-200">
           {symbol} · {interval}
         </span>
