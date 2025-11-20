@@ -174,8 +174,10 @@ def apply_account_risk(
         equity_points = [EquityPoint(ts=first_ts, equity=starting_balance)]
 
     total_pnl = balance - starting_balance
-    win_count = sum(1 for t in executed_trades if t.pnl > 0)
-    win_pct = (win_count / len(executed_trades)) * 100 if executed_trades else 0.0
+    wins = sum(1 for t in executed_trades if t.pnl > 0)
+    losses = sum(1 for t in executed_trades if t.pnl < 0)
+    total_trades = wins + losses
+    win_pct = (wins / total_trades) if total_trades > 0 else 0.0
     summary = BacktestSummary(
         starting_balance=float(starting_balance),
         ending_balance=float(balance),
