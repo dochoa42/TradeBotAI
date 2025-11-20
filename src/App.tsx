@@ -1,33 +1,25 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SimulationDesk } from "./components/SimulationDesk";
-import ChartPanel from "./components/ChartPanel";
+import DashboardView from "./components/DashboardView";
+import MultiChartGrid from "./components/MultiChartGrid";
 import TvCandles, {
   TvCandlePoint,
   TvMarkerData,
   TvOverlayLine,
 } from "./components/TvCandles";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from "recharts";
+import type {
+  IndicatorToggle,
+  ChartPanelStatus,
+} from "./components/ChartPanel";
+import type {
+  Interval,
+  EquityPoint,
+  MultiChartState,
+} from "./types/trading";
 
 // =============================================
 // Types & Constants
 // =============================================
-type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 type AppView = "dashboard" | "multichart" | "simulation";
 type StrategyView = "baseline" | "ai" | "both";
 
@@ -56,11 +48,6 @@ type BacktestTrade = {
   entry_price: number;
   exit_price: number;
   pnl: number;
-};
-
-type EquityPoint = {
-  ts: number;
-  equity: number;
 };
 
 type BacktestMetrics = {
@@ -153,23 +140,11 @@ type ModelPredictResponse = {
   };
 };
 
-type Preset = {
-  name: string;
-  symbol: string; // e.g., BTCUSDT
-  tf: Interval;
-  thr: number;
-  tp: number;
-  sl: number;
-  walkForward: boolean;
-};
-
 // Single, central API base
 const API_BASE =
   (import.meta as any).env?.VITE_API_URL ??
   (import.meta as any).env?.VITE_API_BASE ??
   "http://127.0.0.1:8000";
-
-const PRESET_KEY = "tb_presets_v1";
 const ALLOWED_SYMBOLS = [
   "BTCUSDT",
   "ETHUSDT",
@@ -202,21 +177,6 @@ const VIEW_TITLES: Record<AppView, string> = {
 // =============================================
 // Utilities
 // =============================================
-function loadPresets(): Preset[] {
-  try {
-    const raw = localStorage.getItem(PRESET_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr as Preset[];
-  } catch {
-    return [];
-  }
-}
-
-function savePresets(presets: Preset[]) {
-  localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
-}
 
 function fmtTime(ts: number) {
   const d = new Date(ts);
@@ -364,34 +324,6 @@ function buildOverlays(
   return lines;
 }
 
-// Basic metrics from close-to-close returns (for demo donut)
-function basicMetrics(candles: Candle[]) {
-  if (candles.length < 2) {
-    return { win: 0, loss: 0, flat: 0, winPct: 0, sharpe: 0, pf: 0 };
-  }
-  const rets: number[] = [];
-  for (let i = 1; i < candles.length; i++) {
-    const r =
-      (candles[i].close - candles[i - 1].close) / candles[i - 1].close;
-    rets.push(r);
-  }
-  const wins = rets.filter((r) => r > 0).length;
-  const losses = rets.filter((r) => r < 0).length;
-  const flats = rets.length - wins - losses;
-  const winPct = rets.length ? (wins / rets.length) * 100 : 0;
-  const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
-  const variance =
-    rets.reduce((a, b) => a + (b - mean) * (b - mean), 0) /
-    (rets.length || 1);
-  const stdev = Math.sqrt(variance) || 1e-9;
-  const sharpe = mean / stdev;
-  const sumPos = rets.filter((r) => r > 0).reduce((a, b) => a + b, 0);
-  const sumNeg = Math.abs(
-    rets.filter((r) => r < 0).reduce((a, b) => a + b, 0)
-  );
-  const pf = sumNeg > 0 ? sumPos / sumNeg : sumPos > 0 ? Infinity : 0;
-  return { win: wins, loss: losses, flat: flats, winPct, sharpe, pf };
-}
 
 async function fetchCandlesFromBackend(
   symbol: string,
@@ -436,6 +368,33 @@ function getInitialView(): AppView {
   return "dashboard";
 }
 
+const DEFAULT_MULTI_INTERVALS: Interval[] = ["1m", "5m", "15m", "1h"];
+const MIN_MULTI_TILES = 2;
+const MAX_MULTI_TILES = 6;
+
+function generateTileId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // ignore
+  }
+  return `tile-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createMultiTile(symbol: string, interval: Interval): MultiChartState {
+  return {
+    id: generateTileId(),
+    symbol,
+    interval,
+    candles: [],
+    loading: false,
+    error: null,
+    detached: false,
+  };
+}
+
 // =============================================
 // UI
 // =============================================
@@ -463,21 +422,13 @@ export default function App() {
   const smaPeriod = 20;
   const bbStd = 2;
 
-  // Presets
-  const [presets, setPresets] = useState<Preset[]>(() => loadPresets());
-  const [newPresetName, setNewPresetName] = useState<string>("");
-
   // AI / backtest state
-  const [strategyView, setStrategyView] = useState<StrategyView>("ai");
+  const [strategyView] = useState<StrategyView>("ai");
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(
     null
   );
   const [aiMetrics, setAiMetrics] = useState<BacktestMetrics | null>(null);
   const [aiEquityCurve, setAiEquityCurve] = useState<EquityPoint[]>([]);
-  const [aiFeatureImportance, setAiFeatureImportance] = useState<
-    FeatureImportanceItem[]
-  >([]);
-  const [aiConfusion, setAiConfusion] = useState<ConfusionCounts | null>(null);
   const [aiSignals, setAiSignals] = useState<AiSignal[]>([]);
   const [showAiSignals, setShowAiSignals] = useState(false);
   const [isRunningBacktest, setIsRunningBacktest] = useState(false);
@@ -489,16 +440,9 @@ export default function App() {
 
   // Multi-chart state
   const [multiViewEnabled, setMultiViewEnabled] = useState(false);
-  const [multiASymbol, setMultiASymbol] = useState<string>("BTCUSDT");
-  const [multiATf, setMultiATf] = useState<Interval>("1h");
-  const [multiBSymbol, setMultiBSymbol] = useState<string>("ETHUSDT");
-  const [multiBTf, setMultiBTf] = useState<Interval>("1h");
-  const [multiACandles, setMultiACandles] = useState<Candle[]>([]);
-  const [multiALoading, setMultiALoading] = useState<boolean>(false);
-  const [multiAError, setMultiAError] = useState<string | null>(null);
-  const [multiBCandles, setMultiBCandles] = useState<Candle[]>([]);
-  const [multiBLoading, setMultiBLoading] = useState<boolean>(false);
-  const [multiBError, setMultiBError] = useState<string | null>(null);
+  const [multiCharts, setMultiCharts] = useState<MultiChartState[]>(() =>
+    DEFAULT_MULTI_INTERVALS.map((interval) => createMultiTile("BTCUSDT", interval))
+  );
   const [showFullscreenChart, setShowFullscreenChart] = useState(false);
 
   // Keep ?view in sync for deep links / new tab
@@ -545,69 +489,91 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, tf, showAiSignals]);
 
-  // Multi-chart A
-  useEffect(() => {
-    if (!multiViewEnabled) return;
-    let cancelled = false;
-    async function load() {
-      setMultiALoading(true);
-      setMultiAError(null);
-      try {
-        const sym = (ALLOWED_SYMBOLS as readonly string[]).includes(multiASymbol)
-          ? multiASymbol
-          : "BTCUSDT";
-        const data = await fetchCandlesFromBackend(sym, multiATf, 300);
-        if (!cancelled) {
-          setMultiACandles(data);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setMultiAError(err?.message || "Failed to load chart A");
-          setMultiACandles(buildDemoCandles());
-        }
-      } finally {
-        if (!cancelled) {
-          setMultiALoading(false);
-        }
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [multiViewEnabled, multiASymbol, multiATf]);
+  const multiChartFetchKey = useMemo(() => {
+    return multiCharts
+      .map((tile) => `${tile.id}:${tile.symbol}:${tile.interval}`)
+      .join("|");
+  }, [multiCharts]);
 
-  // Multi-chart B
   useEffect(() => {
-    if (!multiViewEnabled) return;
+    if (!multiViewEnabled || !multiCharts.length) return;
     let cancelled = false;
-    async function load() {
-      setMultiBLoading(true);
-      setMultiBError(null);
-      try {
-        const sym = (ALLOWED_SYMBOLS as readonly string[]).includes(multiBSymbol)
-          ? multiBSymbol
-          : "BTCUSDT";
-        const data = await fetchCandlesFromBackend(sym, multiBTf, 300);
-        if (!cancelled) {
-          setMultiBCandles(data);
+
+    const tilesToFetch = multiCharts.map((tile) => ({
+      id: tile.id,
+      symbol: tile.symbol,
+      interval: tile.interval,
+    }));
+    const fallbackSeries = computeChartPoints(buildDemoCandles(), smaPeriod, bbStd);
+
+    tilesToFetch.forEach((tileInfo) => {
+      setMultiCharts((prev) =>
+        prev.map((tile) =>
+          tile.id === tileInfo.id ? { ...tile, loading: true, error: null } : tile
+        )
+      );
+
+      (async () => {
+        try {
+          const sym = (ALLOWED_SYMBOLS as readonly string[]).includes(tileInfo.symbol)
+            ? tileInfo.symbol
+            : "BTCUSDT";
+          const fetched = await fetchCandlesFromBackend(sym, tileInfo.interval, 300);
+          const chartPoints = computeChartPoints(fetched, smaPeriod, bbStd);
+          if (cancelled) return;
+          setMultiCharts((prev) =>
+            prev.map((tile) =>
+              tile.id === tileInfo.id
+                ? { ...tile, candles: chartPoints, loading: false, error: null }
+                : tile
+            )
+          );
+        } catch (err: any) {
+          if (cancelled) return;
+          setMultiCharts((prev) =>
+            prev.map((tile) =>
+              tile.id === tileInfo.id
+                ? {
+                    ...tile,
+                    candles: fallbackSeries,
+                    loading: false,
+                    error: err?.message || "Failed to load chart",
+                  }
+                : tile
+            )
+          );
         }
-      } catch (err: any) {
-        if (!cancelled) {
-          setMultiBError(err?.message || "Failed to load chart B");
-          setMultiBCandles(buildDemoCandles());
-        }
-      } finally {
-        if (!cancelled) {
-          setMultiBLoading(false);
-        }
-      }
-    }
-    load();
+      })();
+    });
+
     return () => {
       cancelled = true;
     };
-  }, [multiViewEnabled, multiBSymbol, multiBTf]);
+  }, [multiViewEnabled, multiChartFetchKey, smaPeriod, bbStd]);
+
+  const handleTileChange = (id: string, patch: Partial<MultiChartState>) => {
+    setMultiCharts((prev) =>
+      prev.map((tile) => (tile.id === id ? { ...tile, ...patch } : tile))
+    );
+  };
+
+  const addMultiChartTile = () => {
+    setMultiCharts((prev) => {
+      if (prev.length >= MAX_MULTI_TILES) return prev;
+      const template = prev[prev.length - 1] ?? prev[0] ?? createMultiTile(symbol, tf);
+      const nextInterval =
+        DEFAULT_MULTI_INTERVALS[prev.length % DEFAULT_MULTI_INTERVALS.length] ??
+        template.interval;
+      return [...prev, createMultiTile(template.symbol, nextInterval)];
+    });
+  };
+
+  const removeMultiChartTile = () => {
+    setMultiCharts((prev) => {
+      if (prev.length <= MIN_MULTI_TILES) return prev;
+      return prev.slice(0, prev.length - 1);
+    });
+  };
 
   // ----- AI backtest -----
   async function runAiBacktest() {
@@ -642,8 +608,6 @@ export default function App() {
 
       setAiEquityCurve(data.equity_curve);
       setAiMetrics(data.metrics);
-      setAiFeatureImportance(data.feature_importance);
-      setAiConfusion(data.confusion);
       setLastBacktestAt(new Date().toLocaleString());
     } catch (err: any) {
       console.error(err);
@@ -752,21 +716,45 @@ export default function App() {
     return buildOverlays(chartData, { showSMA, showEMA, showBB });
   }, [chartData, showSMA, showEMA, showBB]);
 
-  const multiAChartData = useMemo<ChartPoint[]>(() => {
-    return computeChartPoints(multiACandles, smaPeriod, bbStd);
-  }, [multiACandles, smaPeriod, bbStd]);
+  const multiChartTilesWithOverlays = useMemo(() => {
+    return multiCharts.map((tile) => {
+      const chartPoints = tile.candles as ChartPoint[];
+      const overlaysForTile = buildOverlays(chartPoints, {
+        showSMA,
+        showEMA,
+        showBB,
+      });
+      return {
+        ...tile,
+        candles: chartPoints,
+        overlays: overlaysForTile,
+      };
+    });
+  }, [multiCharts, showSMA, showEMA, showBB]);
 
-  const multiBChartData = useMemo<ChartPoint[]>(() => {
-    return computeChartPoints(multiBCandles, smaPeriod, bbStd);
-  }, [multiBCandles, smaPeriod, bbStd]);
-
-  const multiAOverlays = useMemo<TvOverlayLine[]>(() => {
-    return buildOverlays(multiAChartData, { showSMA, showEMA, showBB });
-  }, [multiAChartData, showSMA, showEMA, showBB]);
-
-  const multiBOverlays = useMemo<TvOverlayLine[]>(() => {
-    return buildOverlays(multiBChartData, { showSMA, showEMA, showBB });
-  }, [multiBChartData, showSMA, showEMA, showBB]);
+  const indicatorToggles = useMemo<IndicatorToggle[]>(
+    () => [
+      {
+        key: "sma",
+        label: "SMA",
+        active: showSMA,
+        onToggle: () => setShowSMA((prev) => !prev),
+      },
+      {
+        key: "ema",
+        label: "EMA",
+        active: showEMA,
+        onToggle: () => setShowEMA((prev) => !prev),
+      },
+      {
+        key: "bb",
+        label: "Boll",
+        active: showBB,
+        onToggle: () => setShowBB((prev) => !prev),
+      },
+    ],
+    [showSMA, showEMA, showBB]
+  );
 
   const tvAiMarkers = useMemo<TvMarkerData[]>(() => {
     if (!showAiSignals || !aiSignals.length || !candles.length) return [];
@@ -789,8 +777,6 @@ export default function App() {
       .filter(Boolean) as TvMarkerData[];
   }, [showAiSignals, aiSignals, candles]);
 
-  const metrics = useMemo(() => basicMetrics(candles), [candles]);
-
   // Last price + statuses
   const lastPrice = candles.length ? candles[candles.length - 1].close : null;
   const prevPrice =
@@ -800,35 +786,7 @@ export default function App() {
       ? ((lastPrice - prevPrice) / prevPrice) * 100
       : null;
 
-  const multiALastPrice = multiACandles.length
-    ? multiACandles[multiACandles.length - 1].close
-    : null;
-  const multiAPrevPrice =
-    multiACandles.length > 1
-      ? multiACandles[multiACandles.length - 2].close
-      : null;
-  const multiAPriceChangePct =
-    multiALastPrice != null &&
-    multiAPrevPrice &&
-    multiAPrevPrice !== 0
-      ? ((multiALastPrice - multiAPrevPrice) / multiAPrevPrice) * 100
-      : null;
-
-  const multiBLastPrice = multiBCandles.length
-    ? multiBCandles[multiBCandles.length - 1].close
-    : null;
-  const multiBPrevPrice =
-    multiBCandles.length > 1
-      ? multiBCandles[multiBCandles.length - 2].close
-      : null;
-  const multiBPriceChangePct =
-    multiBLastPrice != null &&
-    multiBPrevPrice &&
-    multiBPrevPrice !== 0
-      ? ((multiBLastPrice - multiBPrevPrice) / multiBPrevPrice) * 100
-      : null;
-
-  const chartStatus = {
+  const chartStatus: ChartPanelStatus = {
     lastPrice,
     changePct: priceChangePct,
     bars: candles.length,
@@ -836,60 +794,6 @@ export default function App() {
     isLoading: loadingCandles,
     error: candlesError,
   };
-
-  const multiAChartStatus = {
-    lastPrice: multiALastPrice,
-    changePct: multiAPriceChangePct,
-    bars: multiACandles.length,
-    interval: multiATf,
-    isLoading: multiALoading,
-    error: multiAError,
-  };
-
-  const multiBChartStatus = {
-    lastPrice: multiBLastPrice,
-    changePct: multiBPriceChangePct,
-    bars: multiBCandles.length,
-    interval: multiBTf,
-    isLoading: multiBLoading,
-    error: multiBError,
-  };
-
-  const volumeData = useMemo(
-    () =>
-      chartData.map((d) => ({
-        time: d.time,
-        volume: d.volume,
-      })),
-    [chartData]
-  );
-
-  // Preset actions
-  function savePreset() {
-    const name = newPresetName.trim();
-    if (!name) return;
-    const next: Preset = { name, symbol, tf, thr, tp, sl, walkForward };
-    const filtered = presets.filter((p) => p.name !== name);
-    const all = [...filtered, next];
-    setPresets(all);
-    savePresets(all);
-    setNewPresetName("");
-  }
-
-  function loadPreset(p: Preset) {
-    setSymbol(p.symbol);
-    setTf(p.tf);
-    setThr(p.thr);
-    setTp(p.tp);
-    setSl(p.sl);
-    setWalkForward(p.walkForward);
-  }
-
-  function deletePreset(name: string) {
-    const all = presets.filter((p) => p.name !== name);
-    setPresets(all);
-    savePresets(all);
-  }
 
   // Strategy summaries + display helpers
   const hasStrategyPair = Boolean(backtestResult?.strategies);
@@ -908,64 +812,29 @@ export default function App() {
       : aiSummary
     : backtestResult;
 
-  const fallbackFeatureImportance: FeatureImportanceItem[] = [
-    { name: "rsi_14", importance: 0.3 },
-    { name: "close_over_sma20", importance: 0.25 },
-    { name: "vol_z", importance: 0.15 },
-  ];
-
   const metricsSource = summaryForView?.metrics ?? aiMetrics ?? null;
-  const formatWinRate = (m?: BacktestMetrics | null) =>
-    m ? `${(m.win_rate * 100).toFixed(1)}%` : "—";
-  const formatPf = (m?: BacktestMetrics | null) =>
-    m && m.profit_factor > 0 ? m.profit_factor.toFixed(2) : "—";
-  const formatSharpe = (m?: BacktestMetrics | null) =>
-    m ? m.sharpe.toFixed(2) : "—";
-  const formatMaxDd = (m?: BacktestMetrics | null) =>
-    m ? `${(m.max_drawdown * 100).toFixed(1)}%` : "—";
-
-  const winRateDisplay = formatWinRate(metricsSource);
-  const pfDisplay = formatPf(metricsSource);
-  const sharpeDisplay = formatSharpe(metricsSource);
-  const maxDdDisplay = formatMaxDd(metricsSource);
-
-  const featureImportanceOwner = showDualView
-    ? aiSummary ?? baselineSummary
-    : summaryForView;
-  const featureImportanceData =
-    (featureImportanceOwner?.feature_importance?.length
-      ? featureImportanceOwner.feature_importance
-      : null) ??
-    (aiFeatureImportance.length > 0
-      ? aiFeatureImportance
-      : fallbackFeatureImportance);
-
-  const confusion =
-    summaryForView?.confusion ??
-    aiConfusion ?? { tp: 0, fp: 0, tn: 0, fn: 0 };
-
-  const equityCurveSingle =
+  const equityChartData =
     summaryForView?.equity_curve ?? (aiEquityCurve.length ? aiEquityCurve : []);
-  const baselineEquityCurve =
-    baselineSummary?.equity_curve ?? equityCurveSingle;
-  const aiEquityCurveData = aiSummary?.equity_curve ?? equityCurveSingle;
-  const equityChartData = showDualView ? aiEquityCurveData : equityCurveSingle;
-  const equityChartLabel = showDualView
-    ? "Baseline vs AI"
-    : hasStrategyPair
-    ? strategyView === "baseline"
-      ? "Baseline"
-      : "AI"
-    : "AI";
-  const equityLineColor =
-    !hasStrategyPair || strategyView === "ai" ? "#22c55e" : "#f97316";
-  const baselineMetrics = baselineSummary?.metrics ?? null;
-  const aiMetricsSummary = aiSummary?.metrics ?? null;
-  const metricsLabel = hasStrategyPair
-    ? strategyView === "baseline"
-      ? "Baseline"
-      : "AI"
-    : "AI";
+
+  const dashboardMetrics = useMemo(() => {
+    if (!metricsSource) return null;
+    const firstEquity = equityChartData.length
+      ? equityChartData[0].equity
+      : null;
+    const lastEquity = equityChartData.length
+      ? equityChartData[equityChartData.length - 1].equity
+      : null;
+    const pnl =
+      firstEquity != null && lastEquity != null
+        ? lastEquity - firstEquity
+        : undefined;
+    return {
+      pnl,
+      winPct: metricsSource.win_rate * 100,
+      maxDrawdown: metricsSource.max_drawdown * 100,
+      sharpe: metricsSource.sharpe,
+    };
+  }, [metricsSource, equityChartData]);
 
   // API status pill for header
   const apiStatusLabel = candlesError
@@ -1153,457 +1022,6 @@ export default function App() {
     </section>
   );
 
-  const strategyToggleSection = (
-    <section className="max-w-7xl mx-auto px-4 mt-4 flex flex-wrap items-center justify-end gap-2">
-      <span className="text-xs uppercase tracking-wider opacity-70">
-        Strategy View
-      </span>
-      <div className="inline-flex rounded-2xl bg-neutral-900/70 border border-neutral-800 p-1">
-        {(["baseline", "ai", "both"] as StrategyView[]).map((key) => {
-          const label =
-            key === "baseline" ? "Baseline" : key === "ai" ? "AI" : "Both";
-          const disabled = !hasStrategyPair && key !== "ai";
-          const isActive = strategyView === key || (!hasStrategyPair && key === "ai");
-          return (
-            <button
-              key={key}
-              type="button"
-              className={`px-3 py-1 text-xs rounded-xl transition ${
-                isActive
-                  ? "bg-emerald-500 text-neutral-900 font-semibold"
-                  : "text-neutral-300"
-              } ${
-                disabled ? "opacity-40 cursor-not-allowed" : "hover:text-white"
-              }`}
-              onClick={() => {
-                if (disabled) return;
-                setStrategyView(key);
-              }}
-              aria-pressed={isActive}
-              disabled={disabled}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
-
-  const mainChartsSection = (
-    <section className="max-w-7xl mx-auto px-4 mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <ChartPanel
-        className="xl:col-span-2"
-        symbol={symbol}
-        symbols={ALLOWED_SYMBOLS}
-        onSymbolChange={setSymbol}
-        interval={tf}
-        timeframeOptions={TIMEFRAME_OPTIONS}
-        onIntervalChange={(next) => setTf(next as Interval)}
-        indicators={[
-          {
-            key: "sma",
-            label: "SMA",
-            active: showSMA,
-            onToggle: () => setShowSMA((prev) => !prev),
-          },
-          {
-            key: "ema",
-            label: "EMA",
-            active: showEMA,
-            onToggle: () => setShowEMA((prev) => !prev),
-          },
-          {
-            key: "bb",
-            label: "Boll",
-            active: showBB,
-            onToggle: () => setShowBB((prev) => !prev),
-          },
-        ]}
-        status={chartStatus}
-        canFullscreen={true}
-        onOpenFullscreen={() => setShowFullscreenChart(true)}
-      >
-        <TvCandles
-          data={chartData}
-          markers={showAiSignals ? tvAiMarkers : []}
-          overlays={overlays}
-          className="h-full"
-        />
-      </ChartPanel>
-
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-        <h3 className="font-semibold mb-2">Win / Loss / Flat</h3>
-        <div className="h-[220px]">
-          <ResponsiveContainer>
-            <PieChart>
-              <Pie
-                data={[
-                  { name: "Win", value: metrics.win },
-                  { name: "Loss", value: metrics.loss },
-                  { name: "Flat", value: metrics.flat },
-                ]}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={50}
-                outerRadius={80}
-              >
-                <Cell />
-                <Cell />
-                <Cell />
-              </Pie>
-              <Legend />
-              <Tooltip
-                contentStyle={{ background: "#0a0a0a", border: "1px solid #333" }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm">
-          <div className="bg-neutral-800/60 rounded-xl p-2">
-            <div className="opacity-60">Win %</div>
-            <div className="text-lg font-semibold">
-              {metrics.winPct.toFixed(1)}%
-            </div>
-          </div>
-          <div className="bg-neutral-800/60 rounded-xl p-2">
-            <div className="opacity-60">Sharpe</div>
-            <div className="text-lg font-semibold">
-              {Number.isFinite(metrics.sharpe)
-                ? metrics.sharpe.toFixed(2)
-                : "∞"}
-            </div>
-          </div>
-          <div className="bg-neutral-800/60 rounded-xl p-2">
-            <div className="opacity-60">PF</div>
-            <div className="text-lg font-semibold">
-              {Number.isFinite(metrics.pf) ? metrics.pf.toFixed(2) : "∞"}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-
-  const presetsSection = (
-    <section className="max-w-7xl mx-auto px-4 mt-4">
-      <div className="p-4 rounded-2xl bg-neutral-900/80 border border-neutral-800 flex flex-col gap-4">
-        <div>
-          <div className="text-xs uppercase tracking-wider opacity-70 mb-2">
-            Save preset
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              className="flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2"
-              placeholder="Preset name"
-              value={newPresetName}
-              onChange={(e) => setNewPresetName(e.target.value)}
-              aria-label="Preset name"
-            />
-            <button
-              onClick={savePreset}
-              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500"
-            >
-              Save Preset
-            </button>
-          </div>
-        </div>
-        <div>
-          <div className="text-xs uppercase tracking-wider opacity-70 mb-2">
-            Presets
-          </div>
-          {presets.length === 0 ? (
-            <div className="text-sm opacity-60">
-              No presets yet. Create one above.
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {presets.map((p) => (
-                <div
-                  key={p.name}
-                  className="flex items-center gap-2 bg-neutral-800/70 border border-neutral-700 rounded-xl px-3 py-2"
-                >
-                  <div className="text-sm">
-                    <div className="font-semibold">{p.name}</div>
-                    <div className="opacity-70 text-xs">
-                      {p.symbol} · {p.tf} · THR {p.thr} · TP {p.tp} · SL {p.sl}{" "}
-                      {p.walkForward ? "· WF" : ""}
-                    </div>
-                  </div>
-                  <button
-                    className="text-xs px-2 py-1 rounded-lg bg-neutral-700 hover:bg-neutral-600"
-                    onClick={() => loadPreset(p)}
-                  >
-                    Load
-                  </button>
-                  <button
-                    className="text-xs px-2 py-1 rounded-lg bg-rose-600/80 hover:bg-rose-500"
-                    onClick={() => deletePreset(p.name)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-
-  const analyticsSection = (
-    <section className="max-w-7xl mx-auto px-4 mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-        <h3 className="font-semibold mb-2">Volume</h3>
-        <div className="h-[220px]">
-          <ResponsiveContainer>
-            <BarChart data={volumeData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 12, fill: "#aaa" }}
-                minTickGap={28}
-              />
-              <YAxis tick={{ fontSize: 12, fill: "#aaa" }} />
-              <Tooltip
-                contentStyle={{ background: "#0a0a0a", border: "1px solid #333" }}
-              />
-              <Bar dataKey="volume" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-        <h3 className="font-semibold mb-2">Model Room — Feature Importance</h3>
-        <div className="h-[220px]">
-          <ResponsiveContainer>
-            <BarChart data={featureImportanceData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-              <XAxis
-                dataKey="name"
-                tick={{ fontSize: 11, fill: "#aaa" }}
-                interval={0}
-                angle={-25}
-                textAnchor="end"
-              />
-              <YAxis tick={{ fontSize: 12, fill: "#aaa" }} />
-              <Tooltip
-                contentStyle={{ background: "#0a0a0a", border: "1px solid #333" }}
-              />
-              <Bar dataKey="importance" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          {showDualView && hasStrategyPair ? (
-            <>
-              <div className="bg-neutral-800/60 rounded-xl p-2">
-                <div className="opacity-60 mb-1">Baseline Metrics</div>
-                <div className="text-base font-semibold">
-                  Win {formatWinRate(baselineMetrics)}
-                </div>
-                <div className="text-[11px] opacity-70 mt-1">
-                  PF {formatPf(baselineMetrics)} · Sharpe{" "}
-                  {formatSharpe(baselineMetrics)}
-                </div>
-                <div className="text-[11px] opacity-70">
-                  Max DD {formatMaxDd(baselineMetrics)}
-                </div>
-              </div>
-              <div className="bg-neutral-800/60 rounded-xl p-2">
-                <div className="opacity-60 mb-1">AI Metrics</div>
-                <div className="text-base font-semibold">
-                  Win {formatWinRate(aiMetricsSummary)}
-                </div>
-                <div className="text-[11px] opacity-70 mt-1">
-                  PF {formatPf(aiMetricsSummary)} · Sharpe{" "}
-                  {formatSharpe(aiMetricsSummary)}
-                </div>
-                <div className="text-[11px] opacity-70">
-                  Max DD {formatMaxDd(aiMetricsSummary)}
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="bg-neutral-800/60 rounded-xl p-2">
-                <div className="opacity-60 mb-1">{metricsLabel} Win Rate</div>
-                <div className="text-base font-semibold">{winRateDisplay}</div>
-              </div>
-              <div className="bg-neutral-800/60 rounded-xl p-2">
-                <div className="opacity-60 mb-1">{metricsLabel} PF</div>
-                <div className="text-base font-semibold">{pfDisplay}</div>
-              </div>
-              <div className="bg-neutral-800/60 rounded-xl p-2">
-                <div className="opacity-60 mb-1">{metricsLabel} Sharpe</div>
-                <div className="text-base font-semibold">{sharpeDisplay}</div>
-              </div>
-              <div className="bg-neutral-800/60 rounded-xl p-2">
-                <div className="opacity-60 mb-1">{metricsLabel} Max DD</div>
-                <div className="text-base font-semibold">{maxDdDisplay}</div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-        <h3 className="font-semibold mb-2">Model Room — Diagnostics</h3>
-        <div className="grid grid-cols-2 gap-3 text-xs">
-          <div>
-            <div className="opacity-70 mb-1">Confusion (1 vs not-1)</div>
-            <div className="grid grid-cols-2 gap-1 text-center">
-              <div className="bg-neutral-800/70 rounded p-1">
-                <div className="opacity-60 text-[10px]">TP</div>
-                <div className="font-semibold text-sm">{confusion.tp}</div>
-              </div>
-              <div className="bg-neutral-800/70 rounded p-1">
-                <div className="opacity-60 text-[10px]">FP</div>
-                <div className="font-semibold text-sm">{confusion.fp}</div>
-              </div>
-              <div className="bg-neutral-800/70 rounded p-1">
-                <div className="opacity-60 text-[10px]">TN</div>
-                <div className="font-semibold text-sm">{confusion.tn}</div>
-              </div>
-              <div className="bg-neutral-800/70 rounded p-1">
-                <div className="opacity-60 text-[10px]">FN</div>
-                <div className="font-semibold text-sm">{confusion.fn}</div>
-              </div>
-            </div>
-          </div>
-          <div>
-            <div className="opacity-70 mb-1">{`Equity Curve (${equityChartLabel})`}</div>
-            <div className="h-[120px]">
-              <ResponsiveContainer>
-                <LineChart data={equityChartData}>
-                  <XAxis dataKey="ts" tick={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: "#aaa" }} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#0a0a0a",
-                      border: "1px solid #333",
-                    }}
-                    labelFormatter={() => ""}
-                  />
-                  {showDualView && hasStrategyPair ? (
-                    <>
-                      <Line
-                        type="monotone"
-                        dataKey="equity"
-                        data={baselineEquityCurve}
-                        dot={false}
-                        strokeWidth={2}
-                        stroke="#f97316"
-                        name="Baseline"
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="equity"
-                        data={aiEquityCurveData}
-                        dot={false}
-                        strokeWidth={2}
-                        stroke="#22c55e"
-                        name="AI"
-                      />
-                    </>
-                  ) : (
-                    <Line
-                      type="monotone"
-                      dataKey="equity"
-                      dot={false}
-                      strokeWidth={2}
-                      stroke={equityLineColor}
-                    />
-                  )}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-
-  const playgroundSection = (
-    <section className="max-w-7xl mx-auto px-4 mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-        <h3 className="font-semibold mb-2">Signal Density (demo)</h3>
-        <div className="h-[220px]">
-          <ResponsiveContainer>
-            <AreaChart
-              data={chartData.map((d, i) => ({
-                ...d,
-                density: (Math.sin(i / 5) + 1) * 50,
-              }))}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 12, fill: "#aaa" }}
-                minTickGap={28}
-              />
-              <YAxis tick={{ fontSize: 12, fill: "#aaa" }} />
-              <Tooltip
-                contentStyle={{
-                  background: "#0a0a0a",
-                  border: "1px solid #333",
-                }}
-              />
-              <Area
-                type="monotone"
-                dataKey="density"
-                strokeOpacity={1}
-                fillOpacity={0.2}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800">
-        <h3 className="font-semibold mb-2">Slippage Histogram (demo)</h3>
-        <div className="h-[220px]">
-          <ResponsiveContainer>
-            <BarChart
-              data={Array.from({ length: 20 }, (_, i) => ({
-                bucket: i - 10,
-                count: Math.floor(
-                  50 * Math.exp(-((i - 10) * (i - 10)) / 50)
-                ),
-              }))}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-              <XAxis
-                dataKey="bucket"
-                tick={{ fontSize: 12, fill: "#aaa" }}
-              />
-              <YAxis tick={{ fontSize: 12, fill: "#aaa" }} />
-              <Tooltip
-                contentStyle={{
-                  background: "#0a0a0a",
-                  border: "1px solid #333",
-                }}
-              />
-              <Bar dataKey="count" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="p-4 rounded-2xl bg-neutral-900/70 border border-neutral-800 text-xs opacity-80">
-        <h3 className="font-semibold mb-2">Notes</h3>
-        <p>
-          AI metrics and Model Room visuals update after you run the{" "}
-          <span className="font-semibold">AI Backtest</span>.
-        </p>
-        <p className="mt-2">
-          Signal markers appear on the main candle chart when{" "}
-          <span className="font-semibold">Overlay AI signals</span> is enabled.
-        </p>
-      </div>
-    </section>
-  );
 
   const multiChartSection = (
     <section className="max-w-7xl mx-auto px-4 mt-8">
@@ -1611,11 +1029,32 @@ export default function App() {
         <div>
           <h3 className="text-lg font-semibold">Multi-Chart Grid</h3>
           <p className="text-sm text-slate-400">
-            Compare two symbols or timeframes side-by-side with shared
+            Compare up to six symbols or timeframes side-by-side with shared
             indicators.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 justify-end">
+          <div className="inline-flex items-center gap-2 rounded-full border border-neutral-800 bg-neutral-900/80 px-3 py-1 text-xs">
+            <button
+              type="button"
+              onClick={removeMultiChartTile}
+              disabled={multiCharts.length <= MIN_MULTI_TILES}
+              className="px-2 py-0.5 rounded-full border border-neutral-700 hover:border-neutral-500 disabled:opacity-40"
+            >
+              –
+            </button>
+            <span className="font-semibold text-slate-300">
+              {multiCharts.length} charts
+            </span>
+            <button
+              type="button"
+              onClick={addMultiChartTile}
+              disabled={multiCharts.length >= MAX_MULTI_TILES}
+              className="px-2 py-0.5 rounded-full border border-neutral-700 hover:border-neutral-500 disabled:opacity-40"
+            >
+              +
+            </button>
+          </div>
           <button
             type="button"
             onClick={openMultiChartInNewTab}
@@ -1635,80 +1074,13 @@ export default function App() {
         </div>
       </div>
       {multiViewEnabled ? (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <ChartPanel
-            symbol={multiASymbol}
-            symbols={ALLOWED_SYMBOLS}
-            onSymbolChange={setMultiASymbol}
-            interval={multiATf}
-            timeframeOptions={TIMEFRAME_OPTIONS}
-            onIntervalChange={(next) => setMultiATf(next as Interval)}
-            indicators={[
-              {
-                key: "sma",
-                label: "SMA",
-                active: showSMA,
-                onToggle: () => setShowSMA((prev) => !prev),
-              },
-              {
-                key: "ema",
-                label: "EMA",
-                active: showEMA,
-                onToggle: () => setShowEMA((prev) => !prev),
-              },
-              {
-                key: "bb",
-                label: "Boll",
-                active: showBB,
-                onToggle: () => setShowBB((prev) => !prev),
-              },
-            ]}
-            status={multiAChartStatus}
-          >
-            <TvCandles
-              data={multiAChartData}
-              markers={[]}
-              overlays={multiAOverlays}
-              className="h-full"
-            />
-          </ChartPanel>
-          <ChartPanel
-            symbol={multiBSymbol}
-            symbols={ALLOWED_SYMBOLS}
-            onSymbolChange={setMultiBSymbol}
-            interval={multiBTf}
-            timeframeOptions={TIMEFRAME_OPTIONS}
-            onIntervalChange={(next) => setMultiBTf(next as Interval)}
-            indicators={[
-              {
-                key: "sma",
-                label: "SMA",
-                active: showSMA,
-                onToggle: () => setShowSMA((prev) => !prev),
-              },
-              {
-                key: "ema",
-                label: "EMA",
-                active: showEMA,
-                onToggle: () => setShowEMA((prev) => !prev),
-              },
-              {
-                key: "bb",
-                label: "Boll",
-                active: showBB,
-                onToggle: () => setShowBB((prev) => !prev),
-              },
-            ]}
-            status={multiBChartStatus}
-          >
-            <TvCandles
-              data={multiBChartData}
-              markers={[]}
-              overlays={multiBOverlays}
-              className="h-full"
-            />
-          </ChartPanel>
-        </div>
+        <MultiChartGrid
+          tiles={multiChartTilesWithOverlays}
+          symbols={ALLOWED_SYMBOLS}
+          timeframeOptions={TIMEFRAME_OPTIONS}
+          indicators={indicatorToggles}
+          onTileChange={handleTileChange}
+        />
       ) : (
         <div className="text-sm text-slate-400 border border-dashed border-neutral-800 rounded-2xl p-6 text-center">
           Toggle the switch above to load multi-asset charts.
@@ -1756,14 +1128,46 @@ export default function App() {
       break;
     default:
       viewContent = (
-        <>
-          {controlPanelSection}
-          {strategyToggleSection}
-          {mainChartsSection}
-          {presetsSection}
-          {analyticsSection}
-          {playgroundSection}
-        </>
+        <DashboardView
+          symbol={symbol}
+          interval={tf}
+          symbols={ALLOWED_SYMBOLS}
+          timeframeOptions={TIMEFRAME_OPTIONS}
+          onSymbolChange={setSymbol}
+          onIntervalChange={(next) => setTf(next)}
+          indicatorToggles={indicatorToggles}
+          chartStatus={chartStatus}
+          candles={chartData}
+          overlays={overlays}
+          markers={showAiSignals ? tvAiMarkers : []}
+          metrics={dashboardMetrics}
+          equityCurve={equityChartData}
+          showAiSignals={showAiSignals}
+          onToggleAiSignals={async (checked) => {
+            setShowAiSignals(checked);
+            if (checked) {
+              await loadAiSignals();
+            }
+          }}
+          isLoadingSignals={isLoadingSignals}
+          thr={thr}
+          tp={tp}
+          sl={sl}
+          onThrChange={setThr}
+          onTpChange={setTp}
+          onSlChange={setSl}
+          walkForward={walkForward}
+          onToggleWalkForward={setWalkForward}
+          onRunBacktest={runAiBacktest}
+          onStartSimulation={() => setActiveView("simulation")}
+          onDownloadHistory={handleDownloadHistory}
+          isRunningBacktest={isRunningBacktest}
+          isDownloadingHistory={isDownloadingHistory}
+          historyMessage={historyMessage}
+          lastPrice={lastPrice}
+          priceChangePct={priceChangePct}
+          onOpenFullscreen={() => setShowFullscreenChart(true)}
+        />
       );
   }
 
