@@ -90,9 +90,11 @@ class BacktestRequest(BaseModel):
     interval: str
     params: Optional[BacktestParams] = None  # use the real model
 
-    # NEW: optional fields coming from Simulation Desk
+    # Account & risk controls
     starting_balance: Optional[float] = None
     fee: Optional[float] = None
+    risk_per_trade_percent: Optional[float] = None
+    max_daily_loss_percent: Optional[float] = None
 
 
 
@@ -111,18 +113,13 @@ class EquityPoint(BaseModel):
     equity: float
 
 
-class BacktestMetrics(BaseModel):
-    win_rate: float
-    profit_factor: float
-    sharpe: float
+class BacktestSummary(BaseModel):
+    starting_balance: float
+    ending_balance: float
+    total_pnl: float
+    win_pct: float
     max_drawdown: float
-
-
-class ConfusionCounts(BaseModel):
-    tp: int
-    fp: int
-    tn: int
-    fn: int
+    sharpe_ratio: float
 
 
 class HistoryDownloadRequest(BaseModel):
@@ -144,29 +141,8 @@ class HistoryDownloadResponse(BaseModel):
     note: Optional[str] = None
 
 
-class FeatureImportanceItem(BaseModel):
-    name: str
-    importance: float
-
-
-class StrategyBacktestSummary(BaseModel):
-    trades: List[BacktestTrade]
-    equity_curve: List[EquityPoint]
-    metrics: BacktestMetrics
-    confusion: ConfusionCounts
-    feature_importance: List[FeatureImportanceItem]
-
-
-class StrategyBacktestPair(BaseModel):
-    baseline: StrategyBacktestSummary
-    ai: StrategyBacktestSummary
-
-
 class BacktestResponse(BaseModel):
-    trades: List[BacktestTrade]
+    summary: BacktestSummary
     equity_curve: List[EquityPoint]
-    metrics: BacktestMetrics
-    confusion: ConfusionCounts
-    feature_importance: List[FeatureImportanceItem]
-    strategies: Optional[StrategyBacktestPair] = None
+    trades: List[BacktestTrade]
 

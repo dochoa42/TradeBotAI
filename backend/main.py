@@ -1,9 +1,10 @@
-from typing import Optional
+from typing import Optional, List
 
 from pathlib import Path
+from datetime import datetime
+from math import sqrt
 
 import pandas as pd
-import numpy as np
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,19 +23,16 @@ from models import (
     BacktestResponse,
     BacktestTrade,
     EquityPoint,
-    BacktestMetrics,
-    ConfusionCounts,
-    FeatureImportanceItem,
+    BacktestSummary,
     HistoryDownloadRequest,
     HistoryDownloadResponse,
     AiSignalsRequest,
     AiSignalsResponse,
 )
 from binance_client import fetch_klines
-from model_service import predict_signals_from_candles, get_model_and_meta
-from backtest import bollinger_backtest, compute_metrics
+from model_service import predict_signals_from_candles
+from backtest import bollinger_backtest
 from ml.ai_signals import generate_ai_signals_from_csv
-from ml.backtest_engine import run_dual_backtest
 
 
 app = FastAPI(title="Trading Bot 2 Backend", version="0.1.0")
@@ -64,6 +62,130 @@ SYMBOL_WHITELIST = {
     "DOGEUSDT",
     "AVAXUSDT",
 }
+
+DEFAULT_STARTING_BALANCE = 2_000.0
+DEFAULT_RISK_PER_TRADE = 1.0  # percent
+DEFAULT_MAX_DAILY_LOSS = 5.0  # percent of starting balance
+MIN_STOP_DISTANCE_PCT = 0.25  # percent of price if SL not provided
+
+
+def _day_key(ts_ms: int) -> str:
+    return datetime.utcfromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d")
+
+
+def _max_drawdown(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    peak = values[0]
+    max_dd = 0.0
+    for val in values:
+        if val > peak:
+            peak = val
+        if peak <= 0:
+            continue
+        drawdown = (val - peak) / peak
+        if drawdown < max_dd:
+            max_dd = drawdown
+    return float(max_dd)
+
+
+def _sharpe_ratio(values: List[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    returns: List[float] = []
+    for prev, curr in zip(values[:-1], values[1:]):
+        if prev <= 0:
+            continue
+        returns.append((curr - prev) / prev)
+    if len(returns) < 2:
+        return 0.0
+    mean_ret = sum(returns) / len(returns)
+    variance = sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
+    if variance <= 0:
+        return 0.0
+    std = sqrt(variance)
+    return float(sqrt(252.0) * mean_ret / std) if std > 0 else 0.0
+
+
+def apply_account_risk(
+    trades: List[BacktestTrade],
+    starting_balance: float,
+    risk_per_trade_pct: float,
+    max_daily_loss_pct: float,
+    sl_pct: float,
+    fee_pct: float,
+    first_ts: int,
+) -> tuple[List[BacktestTrade], List[EquityPoint], BacktestSummary]:
+    if starting_balance <= 0:
+        starting_balance = DEFAULT_STARTING_BALANCE
+
+    risk_pct = risk_per_trade_pct if risk_per_trade_pct > 0 else DEFAULT_RISK_PER_TRADE
+    daily_loss_limit_pct = (
+        max_daily_loss_pct if max_daily_loss_pct > 0 else DEFAULT_MAX_DAILY_LOSS
+    )
+    stop_pct = sl_pct if sl_pct > 0 else MIN_STOP_DISTANCE_PCT
+
+    balance = starting_balance
+    equity_values = [starting_balance]
+    equity_points = [EquityPoint(ts=first_ts, equity=starting_balance)]
+    executed_trades: List[BacktestTrade] = []
+    daily_losses: dict[str, float] = {}
+    max_daily_loss_value = starting_balance * (daily_loss_limit_pct / 100.0)
+
+    for trade in trades:
+        day_bucket = _day_key(trade.entry_ts)
+        day_loss = daily_losses.get(day_bucket, 0.0)
+        if max_daily_loss_value > 0 and day_loss <= -max_daily_loss_value:
+            continue  # pause trading for the remainder of the day
+
+        stop_distance = trade.entry_price * (stop_pct / 100.0)
+        min_stop_value = trade.entry_price * (MIN_STOP_DISTANCE_PCT / 100.0)
+        stop_distance = max(stop_distance, min_stop_value)
+
+        risk_amount = balance * (risk_pct / 100.0)
+        if stop_distance <= 0 or risk_amount <= 0:
+            continue
+
+        qty = risk_amount / stop_distance
+        price_move = (trade.exit_price - trade.entry_price) * trade.side
+        gross_pnl = qty * price_move
+        fee = abs(gross_pnl) * fee_pct if fee_pct > 0 else 0.0
+        pnl = gross_pnl - fee
+
+        balance += pnl
+        day_loss += pnl
+        daily_losses[day_bucket] = day_loss
+
+        executed_trades.append(
+            BacktestTrade(
+                entry_ts=trade.entry_ts,
+                exit_ts=trade.exit_ts,
+                side=trade.side,
+                entry_price=trade.entry_price,
+                exit_price=trade.exit_price,
+                pnl=float(pnl),
+            )
+        )
+
+        equity_values.append(balance)
+        equity_points.append(EquityPoint(ts=trade.exit_ts, equity=float(balance)))
+
+    if not equity_points:
+        equity_points = [EquityPoint(ts=first_ts, equity=starting_balance)]
+
+    total_pnl = balance - starting_balance
+    win_count = sum(1 for t in executed_trades if t.pnl > 0)
+    win_pct = (win_count / len(executed_trades)) * 100 if executed_trades else 0.0
+    summary = BacktestSummary(
+        starting_balance=float(starting_balance),
+        ending_balance=float(balance),
+        total_pnl=float(total_pnl),
+        win_pct=float(win_pct),
+        max_drawdown=float(_max_drawdown(equity_values)),
+        sharpe_ratio=float(_sharpe_ratio(equity_values)),
+    )
+
+    return executed_trades, equity_points, summary
 
 
 @app.get("/api/health")
@@ -248,11 +370,20 @@ async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
     interval = req.interval
     params = req.params
 
-    # Simulation config coming from the front-end
-    initial_equity = (
-        req.starting_balance if req.starting_balance is not None else 10_000.0
+    starting_balance = (
+        req.starting_balance if req.starting_balance is not None else DEFAULT_STARTING_BALANCE
     )
     fee_pct = req.fee if req.fee is not None else 0.0004
+    risk_per_trade_pct = (
+        req.risk_per_trade_percent
+        if req.risk_per_trade_percent is not None
+        else DEFAULT_RISK_PER_TRADE
+    )
+    max_daily_loss_pct = (
+        req.max_daily_loss_percent
+        if req.max_daily_loss_percent is not None
+        else DEFAULT_MAX_DAILY_LOSS
+    )
 
 
     # 1) Load candles from CSV
@@ -272,28 +403,20 @@ async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
             detail=f"CSV missing columns: {missing}",
         )
 
-    # 2) Pull TP / SL / starting balance from request, with defaults
+    # 2) Pull TP / SL with defaults
     tp = params.tp if params and params.tp is not None else 100
     sl = params.sl if params and params.sl is not None else 50
-    starting_equity = (
-        req.starting_balance if req.starting_balance is not None else 10_000.0
-    )
 
     # 3) Run Bollinger backtest directly on candles (ignore model signals for now)
-    trades_list, equity_series = bollinger_backtest(
-    candles=df,
-    tp_pct=tp,
-    sl_pct=sl,
-    initial_equity=initial_equity,
-    fee_pct=fee_pct,  # add this line if your bollinger_backtest takes fee_pct
+    trades_list, _ = bollinger_backtest(
+        candles=df,
+        tp_pct=tp,
+        sl_pct=sl,
+        initial_equity=starting_balance,
+        fee_pct=fee_pct,
     )
 
-
-    # 4) Metrics from equity + trades
-    metrics = compute_metrics(equity_series, trades_list)
-
-    # 5) Convert trades to response objects
-    trades = [
+    raw_trades = [
         BacktestTrade(
             entry_ts=t.entry_ts,
             exit_ts=t.exit_ts,
@@ -305,53 +428,22 @@ async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
         for t in trades_list
     ]
 
-    # 6) Build equity curve points (align ts with equity index)
-    eq_points: list[EquityPoint] = []
-    eq_values = equity_series.values
-    ts_vals = df["ts"].values
-    eq_len = len(eq_values)
+    first_ts = int(df["ts"].iloc[0]) if not df.empty else int(datetime.utcnow().timestamp() * 1000)
 
-    for i in range(eq_len):
-        ts_idx = min(i, len(ts_vals) - 1)  # clamp index
-        eq_points.append(
-            EquityPoint(ts=int(ts_vals[ts_idx]), equity=float(eq_values[i]))
-        )
-
-    metrics_obj = BacktestMetrics(
-        win_rate=float(metrics["win_rate"]),
-        profit_factor=float(metrics["profit_factor"]),
-        sharpe=float(metrics["sharpe"]),
-        max_drawdown=float(metrics["max_drawdown"]),
+    trades, equity_curve, summary = apply_account_risk(
+        trades=raw_trades,
+        starting_balance=starting_balance,
+        risk_per_trade_pct=risk_per_trade_pct,
+        max_daily_loss_pct=max_daily_loss_pct,
+        sl_pct=sl,
+        fee_pct=fee_pct,
+        first_ts=first_ts,
     )
 
-    # 7) Confusion + feature importance from training metadata (unchanged)
-    model_obj, model_meta = get_model_and_meta()
-    cm_list = model_meta.get("confusion_matrix", [[0, 0, 0], [0, 0, 0], [0, 0, 0]])
-
-    cm = np.array(cm_list)
-    tp_cm = int(cm[2, 2])
-    fn = int(cm[2, 0] + cm[2, 1])
-    fp_cm = int(cm[0, 2] + cm[1, 2])
-    total = int(cm.sum())
-    tn = int(total - tp_cm - fn - fp_cm)
-
-    confusion_obj = ConfusionCounts(tp=tp_cm, fp=fp_cm, tn=tn, fn=fn)
-
-    feat_imp_raw = model_meta.get("feature_importance", [])
-    feat_imp = [
-        FeatureImportanceItem(name=fi["name"], importance=float(fi["importance"]))
-        for fi in feat_imp_raw
-    ]
-
-    strategies_pair = run_dual_backtest(req)
-
     return BacktestResponse(
+        summary=summary,
+        equity_curve=equity_curve,
         trades=trades,
-        equity_curve=eq_points,
-        metrics=metrics_obj,
-        confusion=confusion_obj,
-        feature_importance=feat_imp,
-        strategies=strategies_pair,
     )
 
 

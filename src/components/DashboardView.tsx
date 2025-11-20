@@ -26,6 +26,15 @@ export type DashboardSummaryMetrics = {
   sharpe?: number;
 } | null;
 
+type AccountSummary = {
+  starting_balance: number;
+  ending_balance: number;
+  total_pnl: number;
+  win_pct: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+};
+
 type DashboardViewProps = {
   symbol: string;
   interval: Interval;
@@ -60,6 +69,14 @@ type DashboardViewProps = {
   lastPrice: number | null;
   priceChangePct: number | null;
   onOpenFullscreen: () => void;
+  startingBalance: number;
+  riskPerTradePct: number;
+  maxDailyLossPct: number;
+  onStartingBalanceChange: (value: number) => void;
+  onRiskPerTradeChange: (value: number) => void;
+  onMaxDailyLossChange: (value: number) => void;
+  lastBacktestAt: string | null;
+  accountSummary: AccountSummary | null;
 };
 
 const DashboardView: React.FC<DashboardViewProps> = ({
@@ -96,6 +113,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   lastPrice,
   priceChangePct,
   onOpenFullscreen,
+  startingBalance,
+  riskPerTradePct,
+  maxDailyLossPct,
+  onStartingBalanceChange,
+  onRiskPerTradeChange,
+  onMaxDailyLossChange,
+  lastBacktestAt,
+  accountSummary,
 }) => {
   const equityChartData = useMemo(
     () =>
@@ -124,6 +149,20 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     priceChangePct == null
       ? "text-slate-400"
       : priceChangePct >= 0
+      ? "text-emerald-300"
+      : "text-rose-300";
+  const formatCurrency = (value: number) =>
+    value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  const currentBalance = accountSummary?.ending_balance ?? startingBalance;
+  const startingEquity = accountSummary?.starting_balance ?? startingBalance;
+  const totalPnl = accountSummary?.total_pnl ?? 0;
+  const pnlClass =
+    totalPnl === 0
+      ? "text-slate-200"
+      : totalPnl > 0
       ? "text-emerald-300"
       : "text-rose-300";
 
@@ -251,6 +290,88 @@ const DashboardView: React.FC<DashboardViewProps> = ({
               {historyMessage}
             </span>
           )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-800/70 bg-slate-950/60 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                Account & Risk
+              </div>
+              <p className="text-sm text-slate-400 mt-1">
+                Size trades for small accounts and pause after daily loss caps.
+              </p>
+            </div>
+            <div className="grid gap-3 w-full sm:grid-cols-3 lg:w-auto">
+              <label className="flex flex-col gap-1 text-sm text-slate-300">
+                <span className="text-xs uppercase tracking-wider text-slate-500">
+                  Start balance ($)
+                </span>
+                <input
+                  type="number"
+                  value={startingBalance}
+                  onChange={(e) =>
+                    onStartingBalanceChange(Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0)
+                  }
+                  className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2"
+                  min={0}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-300">
+                <span className="text-xs uppercase tracking-wider text-slate-500">
+                  Risk / trade (%)
+                </span>
+                <input
+                  type="number"
+                  value={riskPerTradePct}
+                  onChange={(e) =>
+                    onRiskPerTradeChange(Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0)
+                  }
+                  className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2"
+                  min={0}
+                  step={0.1}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-300">
+                <span className="text-xs uppercase tracking-wider text-slate-500">
+                  Max daily loss (%)
+                </span>
+                <input
+                  type="number"
+                  value={maxDailyLossPct}
+                  onChange={(e) =>
+                    onMaxDailyLossChange(Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0)
+                  }
+                  className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2"
+                  min={0}
+                  step={0.5}
+                />
+              </label>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-4 sm:grid-cols-3 text-sm text-slate-200">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500">Starting equity</p>
+              <p className="text-xl font-semibold text-slate-100">
+                ${formatCurrency(startingEquity)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500">Current equity</p>
+              <p className="text-xl font-semibold text-slate-100">
+                ${formatCurrency(currentBalance)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500">Total P&L</p>
+              <p className={`text-xl font-semibold ${pnlClass}`}>
+                {totalPnl >= 0 ? "+" : ""}${formatCurrency(totalPnl)}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                Last run · {lastBacktestAt ?? "Not run yet"}
+              </p>
+            </div>
+          </div>
         </div>
       </section>
 

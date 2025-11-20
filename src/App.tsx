@@ -21,7 +21,6 @@ import type {
 // Types & Constants
 // =============================================
 type AppView = "dashboard" | "multichart" | "simulation";
-type StrategyView = "baseline" | "ai" | "both";
 
 type Candle = {
   ts: number;
@@ -50,45 +49,19 @@ type BacktestTrade = {
   pnl: number;
 };
 
-type BacktestMetrics = {
-  win_rate: number;
-  profit_factor: number;
-  sharpe: number;
+type BacktestSummary = {
+  starting_balance: number;
+  ending_balance: number;
+  total_pnl: number;
+  win_pct: number;
   max_drawdown: number;
-};
-
-type ConfusionCounts = {
-  tp: number;
-  fp: number;
-  tn: number;
-  fn: number;
-};
-
-type FeatureImportanceItem = {
-  name: string;
-  importance: number;
-};
-
-type StrategyBacktestSummary = {
-  trades: BacktestTrade[];
-  equity_curve: EquityPoint[];
-  metrics: BacktestMetrics;
-  confusion: ConfusionCounts;
-  feature_importance: FeatureImportanceItem[];
-};
-
-type StrategyBacktestPair = {
-  baseline: StrategyBacktestSummary;
-  ai: StrategyBacktestSummary;
+  sharpe_ratio: number;
 };
 
 type BacktestResponse = {
-  trades: BacktestTrade[];
+  summary: BacktestSummary;
   equity_curve: EquityPoint[];
-  metrics: BacktestMetrics;
-  confusion: ConfusionCounts;
-  feature_importance: FeatureImportanceItem[];
-  strategies?: StrategyBacktestPair | null;
+  trades: BacktestTrade[];
 };
 
 type AiSignalApi = {
@@ -423,12 +396,9 @@ export default function App() {
   const bbStd = 2;
 
   // AI / backtest state
-  const [strategyView] = useState<StrategyView>("ai");
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(
     null
   );
-  const [aiMetrics, setAiMetrics] = useState<BacktestMetrics | null>(null);
-  const [aiEquityCurve, setAiEquityCurve] = useState<EquityPoint[]>([]);
   const [aiSignals, setAiSignals] = useState<AiSignal[]>([]);
   const [showAiSignals, setShowAiSignals] = useState(false);
   const [isRunningBacktest, setIsRunningBacktest] = useState(false);
@@ -437,6 +407,9 @@ export default function App() {
   const [isDownloadingHistory, setIsDownloadingHistory] = useState(false);
   const [historyMessage, setHistoryMessage] = useState<string | null>(null);
   const [lastBacktestAt, setLastBacktestAt] = useState<string | null>(null);
+  const [startingBalance, setStartingBalance] = useState<number>(2000);
+  const [riskPerTradePct, setRiskPerTradePct] = useState<number>(1);
+  const [maxDailyLossPct, setMaxDailyLossPct] = useState<number>(5);
 
   // Multi-chart state
   const [multiViewEnabled, setMultiViewEnabled] = useState(false);
@@ -590,6 +563,9 @@ export default function App() {
           sl, // % SL
           walkForward,
         },
+          starting_balance: startingBalance,
+          risk_per_trade_percent: riskPerTradePct,
+          max_daily_loss_percent: maxDailyLossPct,
       };
 
       const res = await fetch(`${API_BASE}/api/backtest`, {
@@ -605,9 +581,6 @@ export default function App() {
 
       const data: BacktestResponse = await res.json();
       setBacktestResult(data);
-
-      setAiEquityCurve(data.equity_curve);
-      setAiMetrics(data.metrics);
       setLastBacktestAt(new Date().toLocaleString());
     } catch (err: any) {
       console.error(err);
@@ -795,46 +768,27 @@ export default function App() {
     error: candlesError,
   };
 
-  // Strategy summaries + display helpers
-  const hasStrategyPair = Boolean(backtestResult?.strategies);
-  const baselineSummary = backtestResult
-    ? backtestResult.strategies?.baseline ?? backtestResult
+  const accountSummary: BacktestSummary | null = backtestResult
+    ? {
+        starting_balance: backtestResult.summary.starting_balance,
+        ending_balance: backtestResult.summary.ending_balance,
+        total_pnl: backtestResult.summary.total_pnl,
+        win_pct: backtestResult.summary.win_pct,
+        max_drawdown: backtestResult.summary.max_drawdown,
+        sharpe_ratio: backtestResult.summary.sharpe_ratio,
+      }
     : null;
-  const aiSummary = backtestResult
-    ? backtestResult.strategies?.ai ?? backtestResult
-    : null;
-  const showDualView = Boolean(hasStrategyPair && strategyView === "both");
-  const summaryForView = hasStrategyPair
-    ? showDualView
-      ? null
-      : strategyView === "baseline"
-      ? baselineSummary
-      : aiSummary
-    : backtestResult;
-
-  const metricsSource = summaryForView?.metrics ?? aiMetrics ?? null;
-  const equityChartData =
-    summaryForView?.equity_curve ?? (aiEquityCurve.length ? aiEquityCurve : []);
+  const equityChartData: EquityPoint[] = backtestResult?.equity_curve ?? [];
 
   const dashboardMetrics = useMemo(() => {
-    if (!metricsSource) return null;
-    const firstEquity = equityChartData.length
-      ? equityChartData[0].equity
-      : null;
-    const lastEquity = equityChartData.length
-      ? equityChartData[equityChartData.length - 1].equity
-      : null;
-    const pnl =
-      firstEquity != null && lastEquity != null
-        ? lastEquity - firstEquity
-        : undefined;
+    if (!accountSummary) return null;
     return {
-      pnl,
-      winPct: metricsSource.win_rate * 100,
-      maxDrawdown: metricsSource.max_drawdown * 100,
-      sharpe: metricsSource.sharpe,
+      pnl: accountSummary.total_pnl,
+      winPct: accountSummary.win_pct * 100,
+      maxDrawdown: Math.abs(accountSummary.max_drawdown * 100),
+      sharpe: accountSummary.sharpe_ratio,
     };
-  }, [metricsSource, equityChartData]);
+  }, [accountSummary]);
 
   // API status pill for header
   const apiStatusLabel = candlesError
@@ -1167,6 +1121,20 @@ export default function App() {
           lastPrice={lastPrice}
           priceChangePct={priceChangePct}
           onOpenFullscreen={() => setShowFullscreenChart(true)}
+          startingBalance={startingBalance}
+          riskPerTradePct={riskPerTradePct}
+          maxDailyLossPct={maxDailyLossPct}
+          onStartingBalanceChange={(value) =>
+            setStartingBalance(Number.isFinite(value) ? value : 0)
+          }
+          onRiskPerTradeChange={(value) =>
+            setRiskPerTradePct(Number.isFinite(value) ? value : 0)
+          }
+          onMaxDailyLossChange={(value) =>
+            setMaxDailyLossPct(Number.isFinite(value) ? value : 0)
+          }
+          lastBacktestAt={lastBacktestAt}
+          accountSummary={accountSummary}
         />
       );
   }
