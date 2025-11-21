@@ -11,8 +11,24 @@ import numpy as np
 import pandas as pd
 
 from models import Trade as TradeModel
+from data_providers import CandleProvider, CsvCandleProvider
 
 Trade = TradeModel  # re-export for code that imports Trade from this module
+
+
+def load_candles_dataframe(
+    symbol: str,
+    interval: str,
+    limit: int,
+    provider: CandleProvider | None = None,
+) -> pd.DataFrame:
+    """Fetch candles via a provider and normalize into a DataFrame."""
+
+    candle_provider = provider or CsvCandleProvider()
+    candles = candle_provider.get_candles(symbol, interval, limit)
+    if not candles:
+        raise ValueError("No candles returned by provider")
+    return pd.DataFrame(candles, columns=["ts", "open", "high", "low", "close", "volume"])
 
 
 def _side_label(position: int) -> str:

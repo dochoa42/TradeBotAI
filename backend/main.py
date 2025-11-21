@@ -31,8 +31,9 @@ from models import (
 )
 from binance_client import fetch_klines
 from model_service import predict_signals_from_candles
-from backtest import bollinger_backtest
+from backtest import bollinger_backtest, load_candles_dataframe
 from ml.ai_signals import generate_ai_signals_from_csv
+from data_providers import CandleProvider, CsvCandleProvider
 
 
 app = FastAPI(title="Trading Bot 2 Backend", version="0.1.0")
@@ -64,6 +65,7 @@ SYMBOL_WHITELIST = {
 }
 
 DEFAULT_STARTING_BALANCE = 2_000.0
+candle_provider: CandleProvider = CsvCandleProvider()
 
 
 def _max_drawdown(values: List[float]) -> float:
@@ -326,22 +328,15 @@ async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
     )
     fee_pct = req.fee if req.fee is not None else 0.0004
 
-    # 1) Load candles from CSV
-    data_path = Path(__file__).parent / "data" / f"{symbol}_{interval}.csv"
-    if not data_path.exists():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Historical CSV not found: {data_path}",
-        )
-
-    df = pd.read_csv(data_path)
-    expected_cols = ["ts", "open", "high", "low", "close", "volume"]
-    missing = [c for c in expected_cols if c not in df.columns]
-    if missing:
-        raise HTTPException(
-            status_code=500,
-            detail=f"CSV missing columns: {missing}",
-        )
+    # 1) Load candles via the data provider
+    try:
+        df = load_candles_dataframe(symbol, interval, limit=0, provider=candle_provider)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - surfaced via API response
+        raise HTTPException(status_code=500, detail=f"Failed to load candles: {exc}") from exc
 
     # 2) Pull TP / SL with defaults
     tp = params.tp if params and params.tp is not None else 100
