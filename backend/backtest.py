@@ -5,21 +5,66 @@ Simple vector-ish backtester to pair with model signals.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Dict, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 
+from models import Trade as TradeModel
 
-@dataclass
-class Trade:
-    entry_ts: int
-    exit_ts: int
-    side: int       # +1 long, -1 short
-    entry_price: float
-    exit_price: float
-    pnl: float
+Trade = TradeModel  # re-export for code that imports Trade from this module
+
+
+def _side_label(position: int) -> str:
+    return "long" if position > 0 else "short"
+
+
+def _position_qty(notional: float, entry_price: float) -> float:
+    if entry_price <= 0:
+        return 0.0
+    return float(notional / entry_price)
+
+
+def _update_drawdown(
+    current_drawdown: float | None,
+    position: int,
+    entry_price: float | None,
+    price: float,
+    qty: float | None,
+) -> float:
+    if entry_price is None or qty is None or position == 0:
+        return current_drawdown if current_drawdown is not None else 0.0
+
+    unrealized = (price - entry_price) * qty * position
+    if current_drawdown is None:
+        return float(min(0.0, unrealized))
+    return float(min(current_drawdown, unrealized))
+
+
+def _make_trade(
+    trade_id: int,
+    symbol: str,
+    position: int,
+    entry_ts: int,
+    exit_ts: int,
+    entry_price: float,
+    exit_price: float,
+    qty: float,
+    pnl: float,
+    max_drawdown: float | None,
+) -> TradeModel:
+    return TradeModel(
+        id=trade_id,
+        symbol=symbol,
+        side=_side_label(position),
+        entry_ts=entry_ts,
+        exit_ts=exit_ts,
+        entry_price=float(entry_price),
+        exit_price=float(exit_price),
+        qty=float(qty),
+        pnl=float(pnl),
+        max_drawdown_during_trade=float(max_drawdown) if max_drawdown is not None else None,
+    )
 
 
 def run_simple_backtest(
@@ -28,7 +73,8 @@ def run_simple_backtest(
     tp_pct: float,
     sl_pct: float,
     initial_equity: float = 1_000.0,
-) -> Tuple[List[Trade], pd.Series]:
+    symbol: str = "BTCUSDT",
+) -> Tuple[List[TradeModel], pd.Series]:
     """
     Very simple backtest: always 1 "unit" position (normalized).
 
@@ -40,11 +86,14 @@ def run_simple_backtest(
     sig = signals.reindex(df.index).fillna(0).astype(int)
 
     equity = [initial_equity]
-    trades: List[Trade] = []
+    trades: List[TradeModel] = []
 
     position = 0  # +1 long, -1 short, 0 flat
     entry_price = None
     entry_ts = None
+    position_qty: float | None = None
+    max_drawdown: float | None = None
+    trade_id = 1
 
     tp = tp_pct / 100.0
     sl = sl_pct / 100.0
@@ -56,24 +105,33 @@ def run_simple_backtest(
 
         # If in a position, check TP/SL
         if position != 0 and entry_price is not None:
+            max_drawdown = _update_drawdown(max_drawdown, position, entry_price, price, position_qty)
             ret = (price / entry_price - 1.0) * position
             if ret >= tp or ret <= -sl:
                 # Close position
                 pnl = ret * initial_equity
                 equity.append(equity[-1] + pnl)
+                qty = position_qty if position_qty is not None else 0.0
                 trades.append(
-                    Trade(
-                        entry_ts=entry_ts,
+                    _make_trade(
+                        trade_id=trade_id,
+                        symbol=symbol,
+                        position=position,
+                        entry_ts=int(entry_ts),
                         exit_ts=ts,
-                        side=position,
-                        entry_price=entry_price,
+                        entry_price=float(entry_price),
                         exit_price=price,
+                        qty=qty,
                         pnl=pnl,
+                        max_drawdown=max_drawdown,
                     )
                 )
+                trade_id += 1
                 position = 0
                 entry_price = None
                 entry_ts = None
+                position_qty = None
+                max_drawdown = None
             else:
                 equity.append(equity[-1])
         else:
@@ -84,22 +142,30 @@ def run_simple_backtest(
             position = s
             entry_price = price
             entry_ts = ts
+            position_qty = _position_qty(initial_equity, entry_price)
+            max_drawdown = 0.0
 
     # Close any open position at the last bar
     if position != 0 and entry_price is not None:
         price = float(df.loc[len(df) - 1, "close"])
         ts = int(df.loc[len(df) - 1, "ts"])
+        max_drawdown = _update_drawdown(max_drawdown, position, entry_price, price, position_qty)
         ret = (price / entry_price - 1.0) * position
         pnl = ret * initial_equity
         equity.append(equity[-1] + pnl)
+        qty = position_qty if position_qty is not None else 0.0
         trades.append(
-            Trade(
-                entry_ts=entry_ts,
+            _make_trade(
+                trade_id=trade_id,
+                symbol=symbol,
+                position=position,
+                entry_ts=int(entry_ts),
                 exit_ts=ts,
-                side=position,
-                entry_price=entry_price,
+                entry_price=float(entry_price),
                 exit_price=price,
+                qty=qty,
                 pnl=pnl,
+                max_drawdown=max_drawdown,
             )
         )
 
@@ -154,7 +220,8 @@ def bollinger_backtest(
     sl_pct: float,
     initial_equity: float = 1_000.0,
     fee_pct: float = 0.0,
-) -> Tuple[List[Trade], pd.Series]:
+    symbol: str = "BTCUSDT",
+) -> Tuple[List[TradeModel], pd.Series]:
     """
     Simple multi-trade backtest using Bollinger Bands on close prices.
 
@@ -165,7 +232,7 @@ def bollinger_backtest(
           * close on TP or SL (percent move from entry)
           * or close if price crosses back through the 20-period SMA.
 
-    Returns trades (same Trade dataclass) and equity series.
+    Returns Trade models and equity series.
     """
 
     df = candles.copy().reset_index(drop=True)
@@ -180,11 +247,14 @@ def bollinger_backtest(
     sl = sl_pct / 100.0
 
     equity_vals = [initial_equity]
-    trades: List[Trade] = []
+    trades: List[TradeModel] = []
 
-    position = 0          # +1 long, -1 short, 0 flat
+    position = 0  # +1 long, -1 short, 0 flat
     entry_price = None
     entry_ts = None
+    position_qty: float | None = None
+    max_drawdown: float | None = None
+    trade_id = 1
 
     for i in range(len(df)):
         price = float(close.iloc[i])
@@ -205,6 +275,7 @@ def bollinger_backtest(
 
         # --- manage open position ---
         if position != 0 and entry_price is not None:
+            max_drawdown = _update_drawdown(max_drawdown, position, entry_price, price, position_qty)
             ret = (price / entry_price - 1.0) * position
             hit_tp = ret >= tp
             hit_sl = ret <= -sl
@@ -218,19 +289,27 @@ def bollinger_backtest(
                 pnl = gross_pnl - fee
 
                 equity_vals.append(equity_vals[-1] + pnl)
+                qty = position_qty if position_qty is not None else 0.0
                 trades.append(
-                    Trade(
-                        entry_ts=entry_ts,
+                    _make_trade(
+                        trade_id=trade_id,
+                        symbol=symbol,
+                        position=position,
+                        entry_ts=int(entry_ts),
                         exit_ts=ts,
-                        side=position,
-                        entry_price=entry_price,
+                        entry_price=float(entry_price),
                         exit_price=price,
+                        qty=qty,
                         pnl=pnl,
+                        max_drawdown=max_drawdown,
+                    )
                 )
-            )
+                trade_id += 1
                 position = 0
                 entry_price = None
                 entry_ts = None
+                position_qty = None
+                max_drawdown = None
             else:
                 equity_vals.append(equity_vals[-1])
         else:
@@ -252,33 +331,42 @@ def bollinger_backtest(
                 position = 1
                 entry_price = price
                 entry_ts = ts
+                position_qty = _position_qty(initial_equity, entry_price)
+                max_drawdown = 0.0
             elif short_signal:
                 position = -1
                 entry_price = price
                 entry_ts = ts
+                position_qty = _position_qty(initial_equity, entry_price)
+                max_drawdown = 0.0
 
-        # close any open position at the end
-        if position != 0 and entry_price is not None:
-            price = float(close.iloc[-1])
-            ts = int(df.loc[len(df) - 1, "ts"])
-            ret = (price / entry_price - 1.0) * position
+    # Close any open trade at the last available price to keep reporting simple.
+    if position != 0 and entry_price is not None:
+        price = float(close.iloc[-1])
+        ts = int(df.loc[len(df) - 1, "ts"])
+        max_drawdown = _update_drawdown(max_drawdown, position, entry_price, price, position_qty)
+        ret = (price / entry_price - 1.0) * position
 
-            gross_pnl = ret * initial_equity
-            fee = abs(gross_pnl) * fee_pct
-            pnl = gross_pnl - fee
+        gross_pnl = ret * initial_equity
+        fee = abs(gross_pnl) * fee_pct
+        pnl = gross_pnl - fee
 
-            equity_vals.append(equity_vals[-1] + pnl)
-            trades.append(
-                Trade(
-                    entry_ts=entry_ts,
-                    exit_ts=ts,
-                    side=position,
-                    entry_price=entry_price,
-                    exit_price=price,
-                    pnl=pnl,
-                )
+        equity_vals.append(equity_vals[-1] + pnl)
+        qty = position_qty if position_qty is not None else 0.0
+        trades.append(
+            _make_trade(
+                trade_id=trade_id,
+                symbol=symbol,
+                position=position,
+                entry_ts=int(entry_ts),
+                exit_ts=ts,
+                entry_price=float(entry_price),
+                exit_price=price,
+                qty=qty,
+                pnl=pnl,
+                max_drawdown=max_drawdown,
             )
-
+        )
 
     equity_series = pd.Series(equity_vals, index=range(len(equity_vals)))
     return trades, equity_series

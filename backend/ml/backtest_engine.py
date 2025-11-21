@@ -45,7 +45,7 @@ def _convert_trades(trades: List[Trade]) -> List[BacktestTrade]:
         BacktestTrade(
             entry_ts=t.entry_ts,
             exit_ts=t.exit_ts,
-            side=t.side,
+            side=1 if str(t.side).lower() == "long" else -1,
             entry_price=t.entry_price,
             exit_price=t.exit_price,
             pnl=t.pnl,
@@ -123,15 +123,28 @@ def _ai_strategy_backtest(
     signal_map: Dict[int, str],
     initial_equity: float,
     fee_pct: float,
+    symbol: str,
 ) -> Tuple[List[Trade], pd.Series]:
     trades: List[Trade] = []
     equity_vals: List[float] = [initial_equity]
     position = 0
     entry_price: float | None = None
     entry_ts: int | None = None
+    position_qty: float | None = None
+    max_drawdown: float | None = None
+    trade_id = 1
 
     candle_ts = candles["ts"].astype(int).reset_index(drop=True)
     candle_close = candles["close"].astype(float).reset_index(drop=True)
+
+    def _update_dd(current_dd: float | None, price_val: float) -> float:
+        nonlocal entry_price, position, position_qty
+        if entry_price is None or position_qty is None or position == 0:
+            return current_dd if current_dd is not None else 0.0
+        unrealized = (price_val - entry_price) * position_qty * position
+        if current_dd is None:
+            return float(min(0.0, unrealized))
+        return float(min(current_dd, unrealized))
 
     for idx in range(len(candles)):
         ts = int(candle_ts.iloc[idx])
@@ -141,26 +154,37 @@ def _ai_strategy_backtest(
 
         current_equity = equity_vals[-1]
 
+        if position != 0 and entry_price is not None:
+            max_drawdown = _update_dd(max_drawdown, price)
+
         if position != 0 and target_pos != position and entry_price is not None:
             ret = (price / entry_price - 1.0) * position
             gross_pnl = ret * initial_equity
             fee = abs(gross_pnl) * fee_pct
             pnl = gross_pnl - fee
             current_equity += pnl
+            qty = position_qty if position_qty is not None else 0.0
 
             trades.append(
                 Trade(
+                    id=trade_id,
+                    symbol=symbol,
+                    side="long" if position > 0 else "short",
                     entry_ts=int(entry_ts),
                     exit_ts=ts,
-                    side=position,
                     entry_price=float(entry_price),
                     exit_price=price,
-                    pnl=pnl,
+                    qty=float(qty),
+                    pnl=float(pnl),
+                    max_drawdown_during_trade=float(max_drawdown) if max_drawdown is not None else None,
                 )
             )
+            trade_id += 1
             position = 0
             entry_price = None
             entry_ts = None
+            position_qty = None
+            max_drawdown = None
 
         equity_vals.append(current_equity)
 
@@ -168,25 +192,34 @@ def _ai_strategy_backtest(
             position = target_pos
             entry_price = price
             entry_ts = ts
+            position_qty = initial_equity / price if price > 0 else 0.0
+            max_drawdown = 0.0
 
     if position != 0 and entry_price is not None and entry_ts is not None:
         price = float(candle_close.iloc[-1])
         ts = int(candle_ts.iloc[-1])
+        max_drawdown = _update_dd(max_drawdown, price)
         ret = (price / entry_price - 1.0) * position
         gross_pnl = ret * initial_equity
         fee = abs(gross_pnl) * fee_pct
         pnl = gross_pnl - fee
         equity_vals.append(equity_vals[-1] + pnl)
+        qty = position_qty if position_qty is not None else 0.0
         trades.append(
             Trade(
+                id=trade_id,
+                symbol=symbol,
+                side="long" if position > 0 else "short",
                 entry_ts=int(entry_ts),
                 exit_ts=ts,
-                side=position,
                 entry_price=float(entry_price),
                 exit_price=price,
-                pnl=pnl,
+                qty=float(qty),
+                pnl=float(pnl),
+                max_drawdown_during_trade=float(max_drawdown) if max_drawdown is not None else None,
             )
         )
+        trade_id += 1
 
     equity_series = pd.Series(equity_vals, index=range(len(equity_vals)))
     return trades, equity_series
@@ -213,6 +246,7 @@ def run_dual_backtest(req: BacktestRequest) -> StrategyBacktestPair:
         sl_pct=sl,
         initial_equity=initial_equity,
         fee_pct=fee_pct,
+        symbol=req.symbol,
     )
     baseline_summary = _build_summary(
         baseline_trades, baseline_equity, candles, confusion, feature_importance
@@ -224,6 +258,7 @@ def run_dual_backtest(req: BacktestRequest) -> StrategyBacktestPair:
         signal_map=signal_map,
         initial_equity=initial_equity,
         fee_pct=fee_pct,
+        symbol=req.symbol,
     )
     ai_summary = _build_summary(
         ai_trades, ai_equity, candles, confusion, feature_importance

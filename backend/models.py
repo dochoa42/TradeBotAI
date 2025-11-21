@@ -108,6 +108,19 @@ class BacktestTrade(BaseModel):
     pnl: float
 
 
+class Trade(BaseModel):
+    id: int
+    symbol: str
+    side: Literal["long", "short"]
+    entry_ts: int  # unix ms timestamp
+    exit_ts: int | None = None
+    entry_price: float
+    exit_price: float | None = None
+    qty: float
+    pnl: float
+    max_drawdown_during_trade: float | None = None
+
+
 class EquityPoint(BaseModel):
     ts: int
     equity: float
@@ -144,5 +157,5 @@ class HistoryDownloadResponse(BaseModel):
 class BacktestResponse(BaseModel):
     summary: BacktestSummary
     equity_curve: List[EquityPoint]
-    trades: List[BacktestTrade]
+    trades: list[Trade] = []
 
