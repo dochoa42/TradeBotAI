@@ -1,456 +1,274 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import TvCandles, { type TvCandleData } from "./TvCandles";
+import type { ChartPoint, EquityPoint, Trade } from "../types/trading";
 
-import { SimulationViewer } from "./SimulationViewer";
-import TvCandles, { TvCandleData } from "./TvCandles";
-import type {
-  BacktestResponse,
-  EquityPoint,
-  Trade,
-} from "../types/trading";
-
-const API_BASE =
-  (import.meta as any).env?.VITE_API_URL ??
-  (import.meta as any).env?.VITE_API_BASE ??
-  "http://127.0.0.1:8000";
-
-// ---- derived types ----
-type DeskTrade = Trade & Record<string, any>;
-type DeskEquityPoint = EquityPoint & Record<string, any>;
-
-type DeskResponse = BacktestResponse & {
-  equityCurve?: DeskEquityPoint[];
-  trades?: DeskTrade[];
+const formatNumber = (value: number | null | undefined, digits = 2): string => {
+  if (!Number.isFinite(value ?? NaN)) {
+    return "-";
+  }
+  return Number(value).toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+  });
 };
 
-type SimulationState = {
-  response: DeskResponse;
-  step: number;
-  playing: boolean;
-  speedMs: number;
+const formatTimestamp = (ts: number | null): string => {
+  if (ts == null || !Number.isFinite(ts)) {
+    return "-";
+  }
+  return new Date(ts).toLocaleString();
 };
 
-type TradeMarker = {
-  time: any;
-  ts?: number;
-  price: number;
-  side: "long" | "short";
+const resolveTimestamp = (point: ChartPoint | undefined): number | null => {
+  if (!point) return null;
+  if (typeof point.ts === "number" && Number.isFinite(point.ts)) {
+    return point.ts;
+  }
+  if (typeof point.time === "number" && Number.isFinite(point.time)) {
+    return point.time;
+  }
+  if (typeof point.time === "string") {
+    const parsed = Date.parse(point.time);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  if (point.time instanceof Date) {
+    return point.time.getTime();
+  }
+  return null;
 };
 
 type SimulationDeskProps = {
-  priceData: any[];
+  candles: ChartPoint[];
+  equityCurve: EquityPoint[];
+  trades: Trade[];
 };
 
 export const SimulationDesk: React.FC<SimulationDeskProps> = ({
-  priceData,
+  candles,
+  equityCurve,
+  trades,
 }) => {
-  const [symbol, setSymbol] = useState("BTCUSDT");
-  const [timeframe, setTimeframe] = useState("1m");
-  const [startingBalance, setStartingBalance] = useState(10000);
-  const [fee, setFee] = useState(0.0004);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speedMs, setSpeedMs] = useState(250);
 
-  const [simState, setSimState] = useState<SimulationState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showViewer, setShowViewer] = useState(false);
-  const timerRef = useRef<number | null>(null);
+  const totalCandles = candles.length;
+  const hasData = totalCandles > 0 && equityCurve.length > 0;
+  const maxIndex = Math.max(totalCandles - 1, 0);
 
-  // ---- pull core pieces from the response ----
-  const equityCurve: DeskEquityPoint[] =
-    simState?.response.equity_curve ||
-    simState?.response.equityCurve ||
-    [];
-
-  const totalBars = equityCurve.length;
-  const trades: DeskTrade[] = simState?.response.trades || [];
-  const maxStep = Math.max(totalBars - 1, 0);
-
-  const currentPoint =
-    simState && totalBars > 0
-      ? equityCurve[Math.min(simState.step, maxStep)]
-      : null;
-
-  const progressedTrades =
-    simState && trades.length > 0
-      ? trades.filter((_, idx) => idx <= simState.step)
-      : [];
-
-  // ---- call the same /api/backtest as runAiBacktest does ----
-  const fetchBacktest = async () => {
-    setError(null);
-
-    try {
-      const body = {
-        symbol,
-        interval: timeframe,
-        params: {
-          thr: 5,    // lower threshold → more entries
-          tp: 20,     // closer take profit
-          sl: 15,     // closer stop
-          walkForward: false,
-        },
-      };
-
-      const res = await fetch(`${API_BASE}/api/backtest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Backtest failed: ${res.status} ${text}`);
-      }
-
-      const data: BacktestResponse = await res.json();
-
-      console.log(
-        "Backtest trades sample:",
-        data.trades?.[0],
-        "count =",
-        data.trades?.length
-      );
-
-      setSimState({
-        response: data,
-        step: 0,
-        playing: false,
-        speedMs: 120,
-      });
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || "Backtest request failed");
-    }
-  };
-
-  // ---- playback controls ----
-  const play = () => {
-    if (!simState || totalBars === 0) return;
-    setSimState((s) => (s ? { ...s, playing: true } : s));
-  };
-
-  const pause = () => {
-    setSimState((s) => (s ? { ...s, playing: false } : s));
-  };
-
-  const reset = () => {
-    setSimState((s) =>
-      s ? { ...s, step: 0, playing: false } : s
-    );
-  };
-
-  const stepForward = () => {
-    setSimState((s) => {
-      if (!s) return s;
-      const next = Math.min(s.step + 1, maxStep);
-      return {
-        ...s,
-        step: next,
-        playing: next >= maxStep ? false : s.playing,
-      };
-    });
-  };
-
-  const stepBack = () => {
-    setSimState((s) => {
-      if (!s) return s;
-      const prev = Math.max(s.step - 1, 0);
-      return { ...s, step: prev };
-    });
-  };
-
-  const updateSpeed = (value: number) => {
-    setSimState((s) => (s ? { ...s, speedMs: value } : s));
-  };
-
-  // ---- timer effect for auto-play ----
   useEffect(() => {
-    if (!simState?.playing) {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      return;
-    }
+    setCurrentIndex(0);
+    setIsPlaying(false);
+  }, [candles, equityCurve, trades]);
 
-    timerRef.current = window.setInterval(() => {
-      setSimState((s) => {
-        if (!s) return s;
-        const eq =
-          s.response.equity_curve ||
-          s.response.equityCurve ||
-          [];
-        const localMax = Math.max(eq.length - 1, 0);
-        if (s.step >= localMax) {
-          return { ...s, playing: false };
+  useEffect(() => {
+    if (!isPlaying || totalCandles <= 1) return;
+    const id = window.setInterval(() => {
+      setCurrentIndex((prev) => {
+        if (prev >= totalCandles - 1) {
+          setIsPlaying(false);
+          return prev;
         }
-        return { ...s, step: s.step + 1 };
+        return prev + 1;
       });
-    }, simState.speedMs) as unknown as number;
+    }, speedMs);
+    return () => window.clearInterval(id);
+  }, [isPlaying, speedMs, totalCandles]);
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [simState?.playing, simState?.speedMs]);
-
-  // ---- derived stats + chart data ----
-  const visibleBars =
-    simState && totalBars > 0
-      ? Math.min(simState.step + 1, totalBars)
-      : 0;
-
-  const baseEquity =
-    equityCurve.length > 0 && equityCurve[0].equity !== 0
-      ? equityCurve[0].equity
-      : 1;
-
-  const priceSeriesStart =
-    totalBars > 0 ? Math.max(priceData.length - totalBars, 0) : 0;
-  const simPriceSeries =
-    totalBars > 0
-      ? priceData.slice(priceSeriesStart, priceSeriesStart + totalBars)
-      : [];
-  const visiblePriceData =
-    visibleBars > 0 ? simPriceSeries.slice(0, visibleBars) : [];
-  const visibleOhlc = useMemo<TvCandleData[]>(
-    () =>
-      visiblePriceData.map((bar, idx) => ({
-        time:
-          typeof bar?.ts === "number"
-            ? bar.ts
-            : typeof bar?.time === "number"
-            ? bar.time
-            : idx,
-        open: Number(bar?.open) || 0,
-        high: Number(bar?.high) || 0,
-        low: Number(bar?.low) || 0,
-        close: Number(bar?.close) || 0,
-      })),
-    [visiblePriceData]
-  );
-
-  const currentEquity = currentPoint?.equity ?? startingBalance;
-
-  const progressPct =
-    totalBars > 0
-      ? Math.round((100 * visibleBars) / totalBars)
-      : 0;
-
-  const currentTradesCount = progressedTrades.length;
-
-  // ---- trade markers from REAL equity changes only ----
-  const tradeMarkers: TradeMarker[] = [];
-  if (priceData.length && equityCurve.length > 1) {
-    const totalBars = equityCurve.length;
-    const candlesCount = priceData.length;
-
-    // equity index of the first candle in priceData
-    const offset = Math.max(totalBars - candlesCount, 0);
-
-    // how far the playback has progressed in equity indices
-    const lastEquityIdx =
-      simState && typeof simState.step === "number"
-        ? Math.min(simState.step, totalBars - 1)
-        : totalBars - 1;
-
-    // start from the first index that actually maps into priceData
-    const startIdx = Math.max(offset + 1, 1);
-
-    for (let i = startIdx; i <= lastEquityIdx; i++) {
-      const prev = equityCurve[i - 1].equity;
-      const curr = equityCurve[i].equity;
-
-      // if no equity change, no realized trade on this bar
-      if (Math.abs(curr - prev) < 1e-9) continue;
-
-      // map equity index i to candle index in priceData
-      const barIdx = i - offset;
-      if (barIdx < 0 || barIdx >= candlesCount) continue;
-
-      const bar = priceData[barIdx];
-      if (!bar) continue;
-
-      const close = bar.close ?? bar.price ?? 0;
-      const side: "long" | "short" = curr >= prev ? "long" : "short";
-
-      tradeMarkers.push({
-        time: bar.time,
-        ts: typeof bar.ts === "number" ? bar.ts : undefined,
-        price: close,
-        side,
-      });
+  useEffect(() => {
+    if (currentIndex > maxIndex) {
+      setCurrentIndex(maxIndex);
     }
+  }, [currentIndex, maxIndex]);
+
+  const activeIndex = hasData ? Math.min(currentIndex, maxIndex) : 0;
+  const currentCandle = hasData ? candles[activeIndex] : null;
+  const currentTs = useMemo(() => {
+    if (!hasData) return null;
+    const ts = resolveTimestamp(currentCandle ?? undefined);
+    if (ts != null) return ts;
+    return equityCurve[Math.min(activeIndex, equityCurve.length - 1)]?.ts ?? null;
+  }, [activeIndex, currentCandle, equityCurve, hasData]);
+
+  const currentEquityPoint = useMemo(() => {
+    if (!equityCurve.length) return null;
+    if (currentTs == null) {
+      return equityCurve[equityCurve.length - 1];
+    }
+    let latest = equityCurve[0];
+    for (const point of equityCurve) {
+      if (point.ts <= currentTs) {
+        latest = point;
+      } else {
+        break;
+      }
+    }
+    return latest;
+  }, [equityCurve, currentTs]);
+
+  const currentEquity =
+    currentEquityPoint?.equity ?? equityCurve[equityCurve.length - 1]?.equity ?? 0;
+
+  const openTrades = useMemo(() => {
+    if (!trades.length || currentTs == null) return [];
+    return trades
+      .filter(
+        (trade) =>
+          trade.entry_ts <= currentTs &&
+          (trade.exit_ts == null || trade.exit_ts > currentTs)
+      )
+      .sort((a, b) => a.entry_ts - b.entry_ts);
+  }, [trades, currentTs]);
+
+  const realizedPnl = useMemo(() => {
+    if (!trades.length || currentTs == null) return 0;
+    return trades
+      .filter((trade) => trade.exit_ts != null && trade.exit_ts <= currentTs)
+      .reduce((sum, trade) => sum + trade.pnl, 0);
+  }, [trades, currentTs]);
+
+  const candleWindow = useMemo<TvCandleData[]>(() => {
+    if (!hasData) return [];
+    const end = activeIndex + 1;
+    const start = Math.max(0, end - 300);
+    return candles.slice(start, end) as TvCandleData[];
+  }, [activeIndex, candles, hasData]);
+
+  const progressPct = hasData
+    ? totalCandles > 1
+      ? Math.round((activeIndex / (totalCandles - 1)) * 100)
+      : 100
+    : 0;
+
+  const handleScrub = (value: number) => {
+    setIsPlaying(false);
+    setCurrentIndex(value);
+  };
+
+  const handleStepBack = () => setCurrentIndex((prev) => Math.max(0, prev - 1));
+  const handleStepForward = () => setCurrentIndex((prev) => Math.min(maxIndex, prev + 1));
+
+  if (!hasData) {
+    return (
+      <div className="text-sm text-slate-400 border border-dashed border-neutral-700 rounded-2xl p-6 text-center">
+        Provide candles, equity, and trades from a recent backtest to play the simulation.
+      </div>
+    );
   }
 
+  const currentPrice = currentCandle?.close ?? null;
+  const currentTimeLabel = formatTimestamp(currentTs);
+  const activeTradesCount = openTrades.length;
+  const totalTrades = trades.length;
 
-  // ---- render ----
   return (
-    <div className="flex flex-col gap-4 h-full">
-      {/* Top controls */}
+    <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Config card */}
-        <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 flex flex-col gap-3">
-          <h2 className="text-lg font-semibold text-slate-100">
-            Simulation Config
-          </h2>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <label className="flex flex-col gap-1">
-              <span className="text-slate-400">Symbol</span>
-              <input
-                className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100"
-                value={symbol}
-                onChange={(e) =>
-                  setSymbol(e.target.value.toUpperCase())
-                }
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-slate-400">Timeframe</span>
-              <select
-                className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100"
-                value={timeframe}
-                onChange={(e) => setTimeframe(e.target.value)}
-              >
-                <option value="1m">1m</option>
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-slate-400">Starting Balance</span>
-              <input
-                type="number"
-                className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100"
-                value={startingBalance}
-                onChange={(e) =>
-                  setStartingBalance(
-                    Number(e.target.value) || 0
-                  )
-                }
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-slate-400">Fee (per side)</span>
-              <input
-                type="number"
-                step={0.0001}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-100"
-                value={fee}
-                onChange={(e) =>
-                  setFee(Number(e.target.value) || 0)
-                }
-              />
-            </label>
-          </div>
-          <button
-            onClick={fetchBacktest}
-            className="mt-2 w-full bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold rounded-xl py-2 transition"
-          >
-            Run Backtest for Simulation
-          </button>
-          <button
-            onClick={() => setShowViewer(true)}
-            className="mt-2 w-full bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-xl py-2 text-sm"
-          >
-            Open Candle Viewer
-          </button>
-          {error && (
-            <p className="text-xs text-red-400 mt-1">
-              {error}
-            </p>
-          )}
+        <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 space-y-3">
+          <h2 className="text-lg font-semibold text-slate-100">Current Snapshot</h2>
+          <dl className="text-sm text-slate-300 space-y-2">
+            <div className="flex justify-between">
+              <dt>Time</dt>
+              <dd>{currentTimeLabel}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt>Price</dt>
+              <dd>{formatNumber(currentPrice)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt>Equity</dt>
+              <dd>{formatNumber(currentEquity)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt>Open Trades</dt>
+              <dd>{activeTradesCount}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt>Realized P&amp;L</dt>
+              <dd>{formatNumber(realizedPnl)}</dd>
+            </div>
+          </dl>
         </div>
 
-        {/* Playback controls */}
-        <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 flex flex-col gap-3">
-          <h2 className="text-lg font-semibold text-slate-100">
-            Playback Controls
-          </h2>
-          <div className="flex gap-2 flex-wrap">
+        <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 space-y-4">
+          <h2 className="text-lg font-semibold text-slate-100">Playback Controls</h2>
+          <div className="flex flex-wrap gap-2">
             <button
-              onClick={stepBack}
+              type="button"
+              onClick={handleStepBack}
               className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-sm"
+              disabled={activeIndex === 0}
             >
-              ⏮ Step -
-            </button>
-            {simState?.playing ? (
-              <button
-                onClick={pause}
-                className="px-4 py-1 rounded-lg bg-amber-400 text-slate-900 font-semibold text-sm"
-              >
-                ⏸ Pause
-              </button>
-            ) : (
-              <button
-                onClick={play}
-                className="px-4 py-1 rounded-lg bg-emerald-500 text-slate-900 font-semibold text-sm"
-              >
-                ▶ Play
-              </button>
-            )}
-            <button
-              onClick={stepForward}
-              className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-sm"
-            >
-              ⏭ Step +
+              ⏮ Step
             </button>
             <button
-              onClick={reset}
-              className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-sm"
+              type="button"
+              onClick={() => setIsPlaying((prev) => !prev)}
+              className={`px-4 py-1 rounded-lg text-sm font-semibold ${
+                isPlaying
+                  ? "bg-amber-400 text-slate-900"
+                  : "bg-emerald-500 text-slate-900"
+              }`}
             >
-              🔁 Reset
+              {isPlaying ? "⏸ Pause" : "▶ Play"}
+            </button>
+            <button
+              type="button"
+              onClick={handleStepForward}
+              className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-sm"
+              disabled={activeIndex >= maxIndex}
+            >
+              ⏭ Step
             </button>
           </div>
-          <div className="mt-2 text-sm text-slate-300">
-            <div className="flex justify-between items-center mb-1">
-              <span>Speed</span>
-              <span>{simState?.speedMs ?? 120} ms / bar</span>
+          <div className="text-sm text-slate-300">
+            <div className="flex justify-between mb-1">
+              <span>Timeline</span>
+              <span>
+                {activeIndex + 1} / {totalCandles}
+              </span>
             </div>
             <input
               type="range"
-              min={40}
+              min={0}
+              max={maxIndex}
+              value={activeIndex}
+              onChange={(e) => handleScrub(Number(e.target.value))}
+              className="w-full"
+            />
+          </div>
+          <div className="text-sm text-slate-300">
+            <div className="flex justify-between mb-1">
+              <span>Speed</span>
+              <span>{speedMs} ms / candle</span>
+            </div>
+            <input
+              type="range"
+              min={80}
               max={600}
               step={20}
-              value={simState?.speedMs ?? 120}
-              onChange={(e) =>
-                updateSpeed(Number(e.target.value))
-              }
+              value={speedMs}
+              onChange={(e) => setSpeedMs(Number(e.target.value))}
               className="w-full"
             />
           </div>
         </div>
 
-        {/* Status card */}
-        <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 flex flex-col gap-3">
-          <h2 className="text-lg font-semibold text-slate-100">
-            Simulation Status
-          </h2>
-          <div className="space-y-1 text-sm text-slate-300">
+        <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 space-y-3">
+          <h2 className="text-lg font-semibold text-slate-100">Playback Stats</h2>
+          <dl className="text-sm text-slate-300 space-y-2">
             <div className="flex justify-between">
-              <span>Bars Simulated</span>
-              <span>
-                {simState ? `${visibleBars} / ${totalBars}` : "-"}
-              </span>
+              <dt>Progress</dt>
+              <dd>{progressPct}%</dd>
             </div>
             <div className="flex justify-between">
-              <span>Progress</span>
-              <span>{simState ? `${progressPct}%` : "-"}</span>
+              <dt>Total Trades</dt>
+              <dd>{totalTrades}</dd>
             </div>
             <div className="flex justify-between">
-              <span>Trades Triggered</span>
-              <span>{simState ? currentTradesCount : "-"}</span>
+              <dt>Equity Point</dt>
+              <dd>{formatTimestamp(currentEquityPoint?.ts ?? null)}</dd>
             </div>
-            <div className="flex justify-between">
-              <span>Current Equity</span>
-              <span>
-                {currentEquity.toLocaleString(undefined, {
-                  maximumFractionDigits: 2,
-                })}
-              </span>
-            </div>
-          </div>
+          </dl>
           <div className="mt-2 h-1 w-full bg-slate-800 rounded-full overflow-hidden">
             <div
               className="h-full bg-emerald-500 transition-all"
@@ -460,32 +278,63 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
         </div>
       </div>
 
-      {/* Equity curve chart */}
       <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4">
-        <h2 className="text-lg font-semibold text-slate-100 mb-2">
-          Equity Curve Playback
-        </h2>
-
-        {visiblePriceData.length === 0 ? (
+        <h2 className="text-lg font-semibold text-slate-100 mb-2">Candle Playback</h2>
+        {candleWindow.length === 0 ? (
           <p className="text-sm text-slate-400">
-            Run a backtest to see the equity curve animation.
+            Candles will appear here once playback begins.
           </p>
         ) : (
           <div className="mt-2 h-64">
-            <TvCandles data={visibleOhlc} />
+            <TvCandles data={candleWindow} />
           </div>
         )}
       </div>
 
-      {/* Candle playback overlay */}
-      {showViewer && (
-        <SimulationViewer
-          data={priceData}
-          step={simState?.step ?? 0}
-          markers={tradeMarkers}
-          onClose={() => setShowViewer(false)}
-        />
-      )}
+      <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-slate-100">Open Trades</h2>
+          <span className="text-sm text-slate-400">{activeTradesCount} active</span>
+        </div>
+        {openTrades.length === 0 ? (
+          <p className="text-sm text-slate-400">No open trades at this point in the playback.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm text-slate-200">
+              <thead>
+                <tr className="text-left text-slate-400">
+                  <th className="py-2 pr-4">Symbol</th>
+                  <th className="py-2 pr-4">Side</th>
+                  <th className="py-2 pr-4">Entry Time</th>
+                  <th className="py-2 pr-4">Entry Price</th>
+                  <th className="py-2 pr-4">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {openTrades.map((trade) => (
+                  <tr key={trade.id} className="border-t border-slate-800">
+                    <td className="py-2 pr-4">{trade.symbol}</td>
+                    <td className="py-2 pr-4 capitalize">
+                      <span
+                        className={
+                          trade.side === "long"
+                            ? "text-emerald-400"
+                            : "text-rose-400"
+                        }
+                      >
+                        {trade.side}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4">{formatTimestamp(trade.entry_ts)}</td>
+                    <td className="py-2 pr-4">{formatNumber(trade.entry_price)}</td>
+                    <td className="py-2 pr-4">{formatNumber(trade.qty, 4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

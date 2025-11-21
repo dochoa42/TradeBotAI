@@ -2,11 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { SimulationDesk } from "./components/SimulationDesk";
 import DashboardView from "./components/DashboardView";
 import MultiChartGrid from "./components/MultiChartGrid";
-import TvCandles, {
-  TvCandlePoint,
-  TvMarkerData,
-  TvOverlayLine,
-} from "./components/TvCandles";
+import TvCandles, { TvMarkerData, TvOverlayLine } from "./components/TvCandles";
 import type {
   IndicatorToggle,
   ChartPanelStatus,
@@ -17,6 +13,7 @@ import type {
   MultiChartState,
   BacktestResponse,
   BacktestSummary,
+  ChartPoint,
   Trade,
 } from "./types/trading";
 
@@ -32,14 +29,6 @@ type Candle = {
   low: number;
   close: number;
   volume: number;
-};
-
-type ChartPoint = TvCandlePoint & {
-  volume: number;
-  sma: number;
-  ema: number;
-  bbU: number;
-  bbL: number;
 };
 
 type BacktestTrade = Trade;
@@ -379,6 +368,9 @@ export default function App() {
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(
     null
   );
+  const [backtestCandles, setBacktestCandles] = useState<ChartPoint[]>([]);
+  const [backtestEquity, setBacktestEquity] = useState<EquityPoint[]>([]);
+  const [backtestTrades, setBacktestTrades] = useState<Trade[]>([]);
   const [aiSignals, setAiSignals] = useState<AiSignal[]>([]);
   const [showAiSignals, setShowAiSignals] = useState(false);
   const [isRunningBacktest, setIsRunningBacktest] = useState(false);
@@ -561,6 +553,9 @@ export default function App() {
 
       const data: BacktestResponse = await res.json();
       setBacktestResult(data);
+      setBacktestCandles(chartData);
+      setBacktestEquity(data.equity_curve ?? []);
+      setBacktestTrades(data.trades ?? []);
       setLastBacktestAt(new Date().toLocaleString());
     } catch (err: any) {
       console.error(err);
@@ -671,7 +666,7 @@ export default function App() {
 
   const multiChartTilesWithOverlays = useMemo(() => {
     return multiCharts.map((tile) => {
-      const chartPoints = tile.candles as ChartPoint[];
+      const chartPoints = tile.candles;
       const overlaysForTile = buildOverlays(chartPoints, {
         showSMA,
         showEMA,
@@ -1022,10 +1017,15 @@ export default function App() {
         <div className="flex flex-col gap-2 mb-4">
           <h3 className="text-xl font-semibold">Simulation Desk</h3>
           <p className="text-sm text-slate-400">
-            Uses the current dashboard symbol and timeframe for playback.
+            Uses the most recent backtest result for playback. If no backtest has
+            been run yet, it will fall back to the current chart.
           </p>
         </div>
-        <SimulationDesk priceData={chartData} />
+        <SimulationDesk
+          candles={backtestCandles.length ? backtestCandles : chartData}
+          equityCurve={backtestEquity}
+          trades={backtestTrades}
+        />
       </div>
     </section>
   );

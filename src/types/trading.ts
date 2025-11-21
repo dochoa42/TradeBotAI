@@ -7,6 +7,14 @@ export type EquityPoint = {
   equity: number;
 };
 
+export type ChartPoint = TvCandlePoint & {
+  volume: number;
+  sma: number;
+  ema: number;
+  bbU: number;
+  bbL: number;
+};
+
 export type Trade = {
   id: number;
   symbol: string;
@@ -39,7 +47,7 @@ export type MultiChartState = {
   id: string;
   symbol: string;
   interval: Interval;
-  candles: TvCandlePoint[];
+  candles: ChartPoint[];
   loading: boolean;
   error: string | null;
   detached?: boolean;
