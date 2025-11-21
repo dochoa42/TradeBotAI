@@ -2,32 +2,28 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { SimulationViewer } from "./SimulationViewer";
 import TvCandles, { TvCandleData } from "./TvCandles";
+import type {
+  BacktestResponse,
+  EquityPoint,
+  Trade,
+} from "../types/trading";
 
 const API_BASE =
   (import.meta as any).env?.VITE_API_URL ??
   (import.meta as any).env?.VITE_API_BASE ??
   "http://127.0.0.1:8000";
 
-// ---- types ----
-type Trade = {
-  pnl?: number;
-  [key: string]: any;
-};
+// ---- derived types ----
+type DeskTrade = Trade & Record<string, any>;
+type DeskEquityPoint = EquityPoint & Record<string, any>;
 
-type EquityPoint = {
-  equity: number;
-  [key: string]: any;
-};
-
-type BacktestResponse = {
-  equity_curve?: EquityPoint[];
-  equityCurve?: EquityPoint[];
-  trades?: Trade[];
-  [key: string]: any;
+type DeskResponse = BacktestResponse & {
+  equityCurve?: DeskEquityPoint[];
+  trades?: DeskTrade[];
 };
 
 type SimulationState = {
-  response: BacktestResponse;
+  response: DeskResponse;
   step: number;
   playing: boolean;
   speedMs: number;
@@ -58,13 +54,13 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
   const timerRef = useRef<number | null>(null);
 
   // ---- pull core pieces from the response ----
-  const equityCurve: EquityPoint[] =
+  const equityCurve: DeskEquityPoint[] =
     simState?.response.equity_curve ||
     simState?.response.equityCurve ||
     [];
 
   const totalBars = equityCurve.length;
-  const trades = simState?.response.trades || [];
+  const trades: DeskTrade[] = simState?.response.trades || [];
   const maxStep = Math.max(totalBars - 1, 0);
 
   const currentPoint =

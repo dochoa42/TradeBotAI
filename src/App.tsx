@@ -15,6 +15,9 @@ import type {
   Interval,
   EquityPoint,
   MultiChartState,
+  BacktestResponse,
+  BacktestSummary,
+  Trade,
 } from "./types/trading";
 
 // =============================================
@@ -39,30 +42,7 @@ type ChartPoint = TvCandlePoint & {
   bbL: number;
 };
 
-// --- AI / backtest types ---
-type BacktestTrade = {
-  entry_ts: number;
-  exit_ts: number;
-  side: number; // +1 long, -1 short
-  entry_price: number;
-  exit_price: number;
-  pnl: number;
-};
-
-type BacktestSummary = {
-  starting_balance: number;
-  ending_balance: number;
-  total_pnl: number;
-  win_pct: number;
-  max_drawdown: number;
-  sharpe_ratio: number;
-};
-
-type BacktestResponse = {
-  summary: BacktestSummary;
-  equity_curve: EquityPoint[];
-  trades: BacktestTrade[];
-};
+type BacktestTrade = Trade;
 
 type AiSignalApi = {
   ts: number;
@@ -769,14 +749,7 @@ export default function App() {
   };
 
   const accountSummary: BacktestSummary | null = backtestResult
-    ? {
-        starting_balance: backtestResult.summary.starting_balance,
-        ending_balance: backtestResult.summary.ending_balance,
-        total_pnl: backtestResult.summary.total_pnl,
-        win_pct: backtestResult.summary.win_pct,
-        max_drawdown: backtestResult.summary.max_drawdown,
-        sharpe_ratio: backtestResult.summary.sharpe_ratio,
-      }
+    ? backtestResult.summary
     : null;
   const equityChartData: EquityPoint[] = backtestResult?.equity_curve ?? [];
 
