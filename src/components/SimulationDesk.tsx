@@ -18,6 +18,32 @@ const formatTimestamp = (ts: number | null): string => {
   return new Date(ts).toLocaleString();
 };
 
+const formatDuration = (start: number | null, end: number | null): string => {
+  if (
+    start == null ||
+    end == null ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    end < start
+  ) {
+    return "-";
+  }
+
+  const diffMs = end - start;
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) {
+    return `${days}d${hours > 0 ? ` ${hours}h` : ""}`.trim();
+  }
+  if (hours > 0) {
+    return `${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`.trim();
+  }
+  return `${minutes}m`;
+};
+
 const resolveTimestamp = (point: (ChartPoint | TvMarkerData) | undefined): number | null => {
   if (!point) return null;
   if (typeof point.ts === "number" && Number.isFinite(point.ts)) {
@@ -125,12 +151,17 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
       .sort((a, b) => a.entry_ts - b.entry_ts);
   }, [trades, currentTs]);
 
-  const realizedPnl = useMemo(() => {
-    if (!trades.length || currentTs == null) return 0;
+  const closedTrades = useMemo(() => {
+    if (!trades.length || currentTs == null) return [];
     return trades
       .filter((trade) => trade.exit_ts != null && trade.exit_ts <= currentTs)
-      .reduce((sum, trade) => sum + trade.pnl, 0);
+      .sort((a, b) => (b.exit_ts ?? 0) - (a.exit_ts ?? 0));
   }, [trades, currentTs]);
+
+  const realizedPnl = useMemo(() => {
+    if (!closedTrades.length) return 0;
+    return closedTrades.reduce((sum, trade) => sum + trade.pnl, 0);
+  }, [closedTrades]);
 
   const candleWindow = useMemo<TvCandleData[]>(() => {
     if (!hasData) return [];
@@ -365,6 +396,61 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
                     <td className="py-2 pr-4">{formatTimestamp(trade.entry_ts)}</td>
                     <td className="py-2 pr-4">{formatNumber(trade.entry_price)}</td>
                     <td className="py-2 pr-4">{formatNumber(trade.qty, 4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-slate-100">Trade History</h2>
+          <span className="text-sm text-slate-400">{closedTrades.length} closed</span>
+        </div>
+        {closedTrades.length === 0 ? (
+          <p className="text-sm text-slate-400">No closed trades yet in this playback window.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm text-slate-200">
+              <thead>
+                <tr className="text-left text-slate-400">
+                  <th className="py-2 pr-4">Symbol</th>
+                  <th className="py-2 pr-4">Side</th>
+                  <th className="py-2 pr-4">Entry</th>
+                  <th className="py-2 pr-4">Exit</th>
+                  <th className="py-2 pr-4">P&amp;L</th>
+                  <th className="py-2 pr-4">Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {closedTrades.map((trade) => (
+                  <tr key={trade.id} className="border-t border-slate-800">
+                    <td className="py-2 pr-4">{trade.symbol}</td>
+                    <td className="py-2 pr-4 capitalize">
+                      <span
+                        className={
+                          trade.side === "long"
+                            ? "text-emerald-400"
+                            : "text-rose-400"
+                        }
+                      >
+                        {trade.side}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4">{formatTimestamp(trade.entry_ts)}</td>
+                    <td className="py-2 pr-4">{formatTimestamp(trade.exit_ts)}</td>
+                    <td
+                      className={`py-2 pr-4 font-semibold ${
+                        trade.pnl >= 0 ? "text-emerald-400" : "text-rose-400"
+                      }`}
+                    >
+                      {formatNumber(trade.pnl)}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {formatDuration(trade.entry_ts, trade.exit_ts)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
