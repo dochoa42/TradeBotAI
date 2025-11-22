@@ -40,12 +40,14 @@ type SimulationDeskProps = {
   candles: ChartPoint[];
   equityCurve: EquityPoint[];
   trades: Trade[];
+  presetLabel?: string | null;
 };
 
 export const SimulationDesk: React.FC<SimulationDeskProps> = ({
   candles,
   equityCurve,
   trades,
+  presetLabel,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -162,6 +164,18 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-xl font-semibold text-slate-50">Simulation Desk</h3>
+        <p className="text-sm text-slate-400">
+          Uses the most recent backtest result for playback. If no backtest has run yet,
+          it falls back to the current chart data.
+        </p>
+        {presetLabel && (
+          <p className="text-xs text-slate-400 mt-1">
+            Strategy preset: <span className="text-slate-100">{presetLabel}</span>
+          </p>
+        )}
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-slate-900/80 border border-slate-700 rounded-2xl p-4 space-y-3">
           <h2 className="text-lg font-semibold text-slate-100">Current Snapshot</h2>
