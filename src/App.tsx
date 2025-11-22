@@ -22,6 +22,15 @@ import type {
 // =============================================
 type AppView = "dashboard" | "multichart" | "simulation";
 type DataSource = "csv" | "api";
+type StrategyPreset = {
+  id: string;
+  name: string;
+  symbol: string;
+  interval: Interval;
+  thr: number;
+  tp: number;
+  sl: number;
+};
 
 type Candle = {
   ts: number;
@@ -355,6 +364,9 @@ export default function App() {
   const [walkForward, setWalkForward] = useState<boolean>(false);
   // Data source: 'api' (Binance) or 'csv' (local history)
   const [dataSource, setDataSource] = useState<DataSource>("api");
+  // Strategy presets
+  const [presets, setPresets] = useState<StrategyPreset[]>([]);
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
   // Candles
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -401,6 +413,55 @@ export default function App() {
     url.searchParams.set("view", activeView);
     window.history.replaceState(null, "", url.toString());
   }, [activeView]);
+
+  const presetsForCurrent = useMemo(
+    () =>
+      presets.filter(
+        (p) => p.symbol === symbol && p.interval === tf
+      ),
+    [presets, symbol, tf]
+  );
+
+  const activePreset = useMemo(
+    () => presets.find((p) => p.id === activePresetId) ?? null,
+    [presets, activePresetId]
+  );
+
+  const activePresetLabel = useMemo(
+    () =>
+      activePreset
+        ? `${activePreset.name} · ${activePreset.symbol} ${activePreset.interval}`
+        : null,
+    [activePreset]
+  );
+
+  // Load presets from localStorage on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem("tb2_strategy_presets_v1");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setPresets(parsed);
+      }
+    } catch (err) {
+      console.error("Failed to load strategy presets:", err);
+    }
+  }, []);
+
+  // Persist presets to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "tb2_strategy_presets_v1",
+        JSON.stringify(presets)
+      );
+    } catch (err) {
+      console.error("Failed to save strategy presets:", err);
+    }
+  }, [presets]);
 
   // Fetch candles when symbol/tf changes
   useEffect(() => {
@@ -527,6 +588,44 @@ export default function App() {
       if (prev.length <= MIN_MULTI_TILES) return prev;
       return prev.slice(0, prev.length - 1);
     });
+  };
+
+  const handleSavePreset = () => {
+    const defaultName =
+      activePreset?.name ?? `${symbol} ${tf} • THR ${thr} • TP ${tp} • SL ${sl}`;
+
+    const name = window.prompt("Preset name", defaultName);
+    if (!name) return;
+
+    const existing = presets.find(
+      (p) => p.id === activePresetId && p.symbol === symbol && p.interval === tf
+    );
+
+    const id =
+      existing?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const next: StrategyPreset = {
+      id,
+      name,
+      symbol,
+      interval: tf,
+      thr,
+      tp,
+      sl,
+    };
+
+    setPresets((prev) => {
+      const filtered = prev.filter((p) => p.id !== id);
+      return [...filtered, next];
+    });
+    setActivePresetId(id);
+  };
+
+  const handleDeletePreset = () => {
+    if (!activePresetId) return;
+    if (!window.confirm("Delete selected preset?")) return;
+    setPresets((prev) => prev.filter((p) => p.id !== activePresetId));
+    setActivePresetId(null);
   };
 
   // ----- AI backtest -----
@@ -927,6 +1026,47 @@ export default function App() {
                     }
                   }}
                   className="rounded"
+                <div className="flex flex-wrap items-center gap-2 justify-end text-xs sm:text-sm">
+                  <label className="flex items-center gap-2">
+                    <span className="opacity-70">Preset</span>
+                    <select
+                      value={activePresetId ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value || null;
+                        setActivePresetId(id);
+                        if (!id) return;
+                        const preset = presets.find((p) => p.id === id);
+                        if (!preset) return;
+                        setThr(preset.thr);
+                        setTp(preset.tp);
+                        setSl(preset.sl);
+                      }}
+                      className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 min-w-[160px]"
+                    >
+                      <option value="">No preset</option>
+                      {presetsForCurrent.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSavePreset}
+                    className="px-3 py-1.5 rounded-xl border border-indigo-500 text-indigo-100 text-xs sm:text-sm hover:bg-indigo-500/10"
+                  >
+                    Save preset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeletePreset}
+                    disabled={!activePresetId}
+                    className="px-3 py-1.5 rounded-xl border border-red-500 text-red-200 text-xs sm:text-sm disabled:opacity-40 hover:bg-red-500/10"
+                  >
+                    Delete
+                  </button>
+                </div>
                   disabled={isLoadingSignals || !candles.length}
                   aria-label="Overlay AI signals"
                 />
@@ -1046,6 +1186,7 @@ export default function App() {
           candles={backtestCandles.length ? backtestCandles : chartData}
           equityCurve={backtestEquity}
           trades={backtestTrades}
+          presetLabel={activePresetLabel}
         />
       </div>
     </section>
