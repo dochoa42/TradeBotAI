@@ -124,6 +124,8 @@ const DEFAULT_AI_INDICATORS = [
   { id: "bbands", kind: "volatility", params: { length: 20, std: 2 } },
 ];
 
+const AI_SIGNAL_CONF_THRESHOLD = 0.55;
+
 const NAV_ITEMS: { key: AppView; label: string; hint: string }[] = [
   { key: "dashboard", label: "Dashboard", hint: "Overview" },
   { key: "multichart", label: "Multi-Chart Grid", hint: "Compare symbols" },
@@ -777,13 +779,11 @@ export default function App() {
       }
 
       const data = (await res.json()) as AiSignalsResponseApi;
-      const CONF_THRESHOLD = 0.55; // you can tune this later
-
       const normalized: AiSignal[] = data.signals.map((sig) => ({
         ts: sig.ts,
-        signal: sig.confidence >= CONF_THRESHOLD ? "long" : "flat",
+        signal: sig.confidence >= AI_SIGNAL_CONF_THRESHOLD ? "long" : "flat",
         confidence: sig.confidence,
-}));
+      }));
 
       setAiSignals(normalized);
     } catch (err: any) {
@@ -854,14 +854,14 @@ export default function App() {
         if (!sig || sig.signal !== "long") return null;
         return {
           ts: c.ts,
+          side: "long",
           position: "belowBar",
-          color: "#22c55e",
-          shape: "arrowUp",
-          text: "L",
+          text: `AI ${Math.round(sig.confidence * 100)}%`,
         };
       })
       .filter(Boolean) as TvMarkerData[];
   }, [showAiSignals, aiSignals, candles]);
+
 
   // Last price + statuses
   const lastPrice = candles.length ? candles[candles.length - 1].close : null;
