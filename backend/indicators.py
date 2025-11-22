@@ -6,17 +6,12 @@ from typing import Dict, List, Optional, TypedDict, Union
 
 import pandas as pd
 
-try:  # Prefer the namespaced classic import when available
-    import pandas_ta.classic as ta
-except ImportError:  # pragma: no cover - fallback path only hit in some installs
-    try:
-        import pandas_ta_classic as ta
-    except ImportError as exc:  # pragma: no cover - hard failure path
-        msg = (
-            "pandas-ta-classic is required. Install it with "
-            "`pip install pandas-ta-classic`."
-        )
-        raise ImportError(msg) from exc
+try:
+    import pandas_ta_classic as ta
+except ImportError as exc:  # pragma: no cover - hard failure path
+    raise ImportError(
+        "pandas-ta-classic is required. Install it with `pip install pandas-ta-classic`."
+    ) from exc
 
 logger = logging.getLogger(__name__)
 
