@@ -21,6 +21,7 @@ import type {
 // Types & Constants
 // =============================================
 type AppView = "dashboard" | "multichart" | "simulation";
+type DataSource = "csv" | "api";
 
 type Candle = {
   ts: number;
@@ -270,11 +271,12 @@ function buildOverlays(
 async function fetchCandlesFromBackend(
   symbol: string,
   interval: Interval,
-  limit = 500
+  limit = 500,
+  provider: DataSource = "api"
 ): Promise<Candle[]> {
   const url = `${API_BASE}/api/candles?symbol=${encodeURIComponent(
     symbol
-  )}&interval=${interval}&limit=${limit}`;
+  )}&interval=${interval}&limit=${limit}&provider=${provider}`;
   const r = await fetch(url);
   if (!r.ok) {
     const t = await r.text().catch(() => "");
@@ -351,6 +353,8 @@ export default function App() {
   const [tp, setTp] = useState<number>(100);
   const [sl, setSl] = useState<number>(50);
   const [walkForward, setWalkForward] = useState<boolean>(false);
+  // Data source: 'api' (Binance) or 'csv' (local history)
+  const [dataSource, setDataSource] = useState<DataSource>("api");
 
   // Candles
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -408,7 +412,7 @@ export default function App() {
         const s = (ALLOWED_SYMBOLS as readonly string[]).includes(symbol)
           ? symbol
           : "BTCUSDT";
-        const data = await fetchCandlesFromBackend(s, tf, 500);
+        const data = await fetchCandlesFromBackend(s, tf, 500, dataSource);
         if (!cancelled) setCandles(data);
       } catch (err: any) {
         console.error("fetchCandlesFromBackend failed:", err);
@@ -424,7 +428,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [symbol, tf]);
+  }, [symbol, tf, dataSource]);
 
   // Reload AI signals when toggled on / symbol / tf change
   useEffect(() => {
@@ -463,7 +467,12 @@ export default function App() {
           const sym = (ALLOWED_SYMBOLS as readonly string[]).includes(tileInfo.symbol)
             ? tileInfo.symbol
             : "BTCUSDT";
-          const fetched = await fetchCandlesFromBackend(sym, tileInfo.interval, 300);
+          const fetched = await fetchCandlesFromBackend(
+            sym,
+            tileInfo.interval,
+            300,
+            dataSource
+          );
           const chartPoints = computeChartPoints(fetched, smaPeriod, bbStd);
           if (cancelled) return;
           setMultiCharts((prev) =>
@@ -494,7 +503,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [multiViewEnabled, multiChartFetchKey, smaPeriod, bbStd]);
+  }, [multiViewEnabled, multiChartFetchKey, smaPeriod, bbStd, dataSource]);
 
   const handleTileChange = (id: string, patch: Partial<MultiChartState>) => {
     setMultiCharts((prev) =>
@@ -540,7 +549,7 @@ export default function App() {
           max_daily_loss_percent: maxDailyLossPct,
       };
 
-      const res = await fetch(`${API_BASE}/api/backtest`, {
+      const res = await fetch(`${API_BASE}/api/backtest?provider=${dataSource}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -593,7 +602,7 @@ export default function App() {
       try {
         setLoadingCandles(true);
         setCandlesError(null);
-        const refreshed = await fetchCandlesFromBackend(symbol, tf, 500);
+        const refreshed = await fetchCandlesFromBackend(symbol, tf, 500, dataSource);
         setCandles(refreshed);
       } catch (refreshErr: any) {
         console.error(
@@ -815,6 +824,18 @@ export default function App() {
                   {t}
                 </button>
               ))}
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="uppercase tracking-wider text-slate-400">Source</span>
+              <select
+                value={dataSource}
+                onChange={(e) => setDataSource(e.target.value as DataSource)}
+                className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                aria-label="Select data source"
+              >
+                <option value="api">API (Binance)</option>
+                <option value="csv">CSV (Local)</option>
+              </select>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs">
               <label className="inline-flex items-center gap-1.5">
