@@ -8,12 +8,12 @@ rem If there is a backend subfolder (project root), go into it
 if exist "backend\main.py" (
     cd backend
 ) else (
-    rem Otherwise assume we are already inside backend; if not, show error
+    rem Otherwise assume we are already inside backend
     if not exist "main.py" (
         echo [ERROR] Could not find backend\main.py or main.py.
-        echo Place run_backend.bat either:
-        echo   - In the project root (next to the backend folder)
-        echo   - Or inside the backend folder next to main.py
+        echo Make sure run_backend.bat is either:
+        echo   - In G:\Trading Bot V2.1\  (with backend\main.py), or
+        echo   - In G:\Trading Bot V2.1\backend\  (next to main.py).
         pause
         exit /b 1
     )

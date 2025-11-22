@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, TypedDict, Union
+from typing import Dict, List, Optional, Union
+from typing_extensions import TypedDict
 
 import pandas as pd
 
