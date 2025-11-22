@@ -51,24 +51,20 @@ type BacktestTrade = Trade;
 
 type AiSignalApi = {
   ts: number;
-  side: "long" | "short" | "flat";
-  prob_long: number;
-  prob_short: number;
-  prob_flat: number;
-};
-
-type AiSignal = {
-  ts: number;
-  signal: "long" | "short" | "flat";
-  prob_long: number;
-  prob_short: number;
-  prob_flat: number;
+  signal: number; // 0 or 1 from backend
+  confidence: number; // probability for class 1
 };
 
 type AiSignalsResponseApi = {
   symbol: string;
-  interval: Interval;
+  interval: string;
   signals: AiSignalApi[];
+};
+
+export type AiSignal = {
+  ts: number;
+  signal: "long" | "flat";
+  confidence: number;
 };
 
 type HistoryDownloadResponse = {
@@ -118,6 +114,14 @@ const TIMEFRAME_OPTIONS: Interval[] = [
   "1h",
   "4h",
   "1d",
+];
+
+const DEFAULT_AI_INDICATORS = [
+  { id: "sma", kind: "trend", params: { length: 20 } },
+  { id: "ema", kind: "trend", params: { length: 50 } },
+  { id: "rsi", kind: "oscillator", params: { length: 14 } },
+  { id: "macd", kind: "trend", params: { fast: 12, slow: 26, signal: 9 } },
+  { id: "bbands", kind: "volatility", params: { length: 20, std: 2 } },
 ];
 
 const NAV_ITEMS: { key: AppView; label: string; hint: string }[] = [
@@ -756,16 +760,15 @@ export default function App() {
       setIsLoadingSignals(true);
       setApiError(null);
 
-      const body = {
-        symbol,
-        interval: tf,
-        limit: 500,
-      };
-
       const res = await fetch(`${API_BASE}/api/ai/signals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          symbol,
+          interval: tf,
+          limit: 500,
+          indicators: DEFAULT_AI_INDICATORS,
+        }),
       });
 
       if (!res.ok) {
@@ -773,13 +776,11 @@ export default function App() {
         throw new Error(`AI signals request failed: ${res.status} ${text}`);
       }
 
-      const data: AiSignalsResponseApi = await res.json();
+      const data = (await res.json()) as AiSignalsResponseApi;
       const normalized: AiSignal[] = data.signals.map((sig) => ({
         ts: sig.ts,
-        signal: sig.side,
-        prob_long: sig.prob_long,
-        prob_short: sig.prob_short,
-        prob_flat: sig.prob_flat,
+        signal: sig.signal === 1 && sig.confidence >= 0.5 ? "long" : "flat",
+        confidence: sig.confidence,
       }));
       setAiSignals(normalized);
     } catch (err: any) {
@@ -842,19 +843,18 @@ export default function App() {
   const tvAiMarkers = useMemo<TvMarkerData[]>(() => {
     if (!showAiSignals || !aiSignals.length || !candles.length) return [];
 
-    const byTs = new Map(aiSignals.map((s) => [s.ts, s.signal]));
+    const byTs = new Map(aiSignals.map((s) => [s.ts, s]));
 
     return candles
       .map((c) => {
         const sig = byTs.get(c.ts);
-        if (!sig || sig === "flat") return null;
-        const isLong = sig === "long";
+        if (!sig || sig.signal !== "long") return null;
         return {
           ts: c.ts,
-          position: isLong ? "belowBar" : "aboveBar",
-          color: isLong ? "#22c55e" : "#ef4444",
-          shape: isLong ? "arrowUp" : "arrowDown",
-          text: isLong ? "L" : "S",
+          position: "belowBar",
+          color: "#22c55e",
+          shape: "arrowUp",
+          text: "L",
         };
       })
       .filter(Boolean) as TvMarkerData[];
