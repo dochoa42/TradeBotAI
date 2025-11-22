@@ -1258,6 +1258,8 @@ export default function App() {
           equityCurve={backtestEquity}
           trades={backtestTrades}
           presetLabel={activePresetLabel}
+          aiMarkers={tvAiMarkers}
+          showAiSignals={showAiSignals}
         />
       </div>
     </section>

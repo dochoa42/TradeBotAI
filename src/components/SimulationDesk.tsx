@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import TvCandles, { type TvCandleData } from "./TvCandles";
+import TvCandles, { type TvCandleData, type TvMarkerData } from "./TvCandles";
 import type { ChartPoint, EquityPoint, Trade } from "../types/trading";
 
 const formatNumber = (value: number | null | undefined, digits = 2): string => {
@@ -18,7 +18,7 @@ const formatTimestamp = (ts: number | null): string => {
   return new Date(ts).toLocaleString();
 };
 
-const resolveTimestamp = (point: ChartPoint | undefined): number | null => {
+const resolveTimestamp = (point: (ChartPoint | TvMarkerData) | undefined): number | null => {
   if (!point) return null;
   if (typeof point.ts === "number" && Number.isFinite(point.ts)) {
     return point.ts;
@@ -41,6 +41,8 @@ type SimulationDeskProps = {
   equityCurve: EquityPoint[];
   trades: Trade[];
   presetLabel?: string | null;
+  aiMarkers?: TvMarkerData[];
+  showAiSignals?: boolean;
 };
 
 export const SimulationDesk: React.FC<SimulationDeskProps> = ({
@@ -48,6 +50,8 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
   equityCurve,
   trades,
   presetLabel,
+  aiMarkers = [],
+  showAiSignals = false,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -134,6 +138,25 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
     const start = Math.max(0, end - 300);
     return candles.slice(start, end) as TvCandleData[];
   }, [activeIndex, candles, hasData]);
+
+  const playbackMarkers = useMemo<TvMarkerData[]>(() => {
+    if (!showAiSignals || !aiMarkers.length || !candleWindow.length) {
+      return [];
+    }
+
+    const startTs = resolveTimestamp(candleWindow[0]);
+    const endTs = resolveTimestamp(candleWindow[candleWindow.length - 1]);
+
+    if (startTs == null || endTs == null) {
+      return showAiSignals ? aiMarkers : [];
+    }
+
+    return aiMarkers.filter((marker) => {
+      const ts = resolveTimestamp(marker);
+      if (ts == null) return false;
+      return ts >= startTs && ts <= endTs;
+    });
+  }, [aiMarkers, candleWindow, showAiSignals]);
 
   const progressPct = hasData
     ? totalCandles > 1
@@ -300,7 +323,7 @@ export const SimulationDesk: React.FC<SimulationDeskProps> = ({
           </p>
         ) : (
           <div className="mt-2 h-64">
-            <TvCandles data={candleWindow} />
+            <TvCandles data={candleWindow} markers={playbackMarkers} />
           </div>
         )}
       </div>
