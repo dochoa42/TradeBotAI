@@ -60,10 +60,8 @@ class ModelPredictResponse(BaseModel):
 
 class AiSignal(BaseModel):
     ts: int = Field(..., description="Timestamp of the bar (ms since epoch)")
-    side: Literal["long", "short", "flat"]
-    prob_long: float
-    prob_short: float
-    prob_flat: float
+    signal: int = Field(..., description="Model output, typically 0 or 1")
+    confidence: float = Field(..., description="Probability/confidence for class 1")
 
 
 class AiSignalsRequest(BaseModel):

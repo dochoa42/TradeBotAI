@@ -4,6 +4,8 @@ from pathlib import Path
 from datetime import datetime
 from math import sqrt
 
+import joblib
+import numpy as np
 import pandas as pd
 
 from fastapi import FastAPI, Query, HTTPException
@@ -38,17 +40,6 @@ try:
     from .indicators import compute_indicators, IndicatorSpec
 except ImportError:  # pragma: no cover - allow running as script
     from indicators import compute_indicators, IndicatorSpec  # type: ignore
-
-try:
-    from .ml.ai_signals import (
-        generate_ai_signals_from_dataframe,
-        load_ai_signal_candles,
-    )
-except ImportError:  # pragma: no cover - allow running as script
-    from ml.ai_signals import (  # type: ignore
-        generate_ai_signals_from_dataframe,
-        load_ai_signal_candles,
-    )
 
 
 app = FastAPI(title="Trading Bot 2 Backend", version="0.1.0")
@@ -86,6 +77,48 @@ DataProvider = Literal["csv", "api"]
 
 DEFAULT_CANDLES_PROVIDER: DataProvider = "api"
 DEFAULT_BACKTEST_PROVIDER: DataProvider = "csv"
+
+MODEL_PATH = Path(__file__).parent / "models" / "model_v1.pkl"
+ai_model: object | None = None
+ai_feature_cols: list[str] | None = None
+
+
+def load_ai_model() -> None:
+    """Load the trained AI model into global state."""
+
+    global ai_model, ai_feature_cols
+
+    if not MODEL_PATH.exists():
+        ai_model = None
+        ai_feature_cols = None
+        print(f"[AI] No model found at {MODEL_PATH}; /api/ai/signals will return 503.")
+        return
+
+    try:
+        payload = joblib.load(MODEL_PATH)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        ai_model = None
+        ai_feature_cols = None
+        print(f"[AI] Failed to load model from {MODEL_PATH}: {exc}")
+        return
+
+    ai_model = payload.get("model")
+    feature_cols = payload.get("feature_cols")
+    ai_feature_cols = list(feature_cols) if isinstance(feature_cols, list) else None
+
+    if ai_model is None or ai_feature_cols is None:
+        print(
+            f"[AI] Model payload at {MODEL_PATH} is missing required keys; /api/ai/signals will return 503."
+        )
+    else:
+        print(
+            f"[AI] Loaded model from {MODEL_PATH} with {len(ai_feature_cols)} feature columns."
+        )
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    load_ai_model()
 
 
 def _max_drawdown(values: List[float]) -> float:
@@ -305,27 +338,25 @@ async def download_history(req: HistoryDownloadRequest) -> HistoryDownloadRespon
 
 @app.post("/api/ai/signals", response_model=AiSignalsResponse)
 async def get_ai_signals(req: AiSignalsRequest) -> AiSignalsResponse:
-    """
-    Generate per-bar placeholder AI signals from stored CSV history.
+    """Serve AI signals using the trained model payload."""
 
-    Uses the rule-based helper in ml/ai_signals.py for now.
-    """
     symbol = req.symbol.upper()
     interval = req.interval
-    limit = req.limit
 
     try:
-        df = load_ai_signal_candles(symbol, interval, limit)
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=str(e) + " – make sure you've run the History Downloader first.",
-        )
-    except Exception as e:
+        df = load_candles_dataframe(symbol, interval, limit=req.limit, provider=candle_provider)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - surfaced via API response
         raise HTTPException(
             status_code=500,
-            detail=f"AI signal history load failed: {e}",
-        )
+            detail=f"Failed to load candles for AI signals: {exc}",
+        ) from exc
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="No candles available for AI signals.")
 
     indicator_specs: List[IndicatorSpec] = req.indicators or []
     if indicator_specs:
@@ -339,19 +370,55 @@ async def get_ai_signals(req: AiSignalsRequest) -> AiSignalsResponse:
                 detail=f"Indicator calculation failed: {exc}",
             ) from exc
 
-    try:
-        signals = generate_ai_signals_from_dataframe(df)
-    except Exception as e:
+    if ai_model is None or ai_feature_cols is None:
         raise HTTPException(
-            status_code=500,
-            detail=f"AI signal generation failed: {e}",
+            status_code=503,
+            detail="AI model not loaded. Train a model_v1.pkl first.",
         )
 
-    return AiSignalsResponse(
-        symbol=symbol,
-        interval=interval,
-        signals=signals,
-    )
+    missing = [col for col in ai_feature_cols if col not in df.columns]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing feature columns for AI model: {missing}",
+        )
+
+    feature_frame = df[ai_feature_cols].replace([np.inf, -np.inf], np.nan)
+    valid_mask = feature_frame.notna().all(axis=1)
+    feature_frame = feature_frame.loc[valid_mask]
+    df = df.loc[valid_mask].reset_index(drop=True)
+
+    if feature_frame.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough data after indicator warmup for AI signals.",
+        )
+
+    X = feature_frame.to_numpy(dtype=float)
+
+    try:
+        if hasattr(ai_model, "predict_proba"):
+            proba = ai_model.predict_proba(X)
+            if proba.ndim != 2 or proba.shape[1] < 2:
+                raise ValueError("Model predict_proba did not return two classes")
+            confidences = proba[:, 1]
+            preds = (confidences >= 0.5).astype(int)
+        else:
+            preds = ai_model.predict(X)
+            confidences = np.ones_like(preds, dtype=float)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI model inference failed: {exc}") from exc
+
+    signals = [
+        {
+            "ts": int(df["ts"].iloc[i]),
+            "signal": int(preds[i]),
+            "confidence": float(confidences[i]),
+        }
+        for i in range(len(df))
+    ]
+
+    return AiSignalsResponse(symbol=symbol, interval=interval, signals=signals)
 
 
 @app.post("/api/model/predict", response_model=ModelPredictResponse)
