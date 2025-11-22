@@ -111,38 +111,36 @@ def _load_candles(symbol: str, interval: str, limit: int) -> pd.DataFrame:
     return df
 
 
-def generate_ai_signals_from_csv(symbol: str, interval: str, limit: int) -> List[Dict]:
-    """
-    Placeholder 'AI' logic:
-      - If price < lower band  -> strongly long
-      - If price > upper band  -> strongly short
-      - Otherwise               -> flat
+def load_ai_signal_candles(symbol: str, interval: str, limit: int) -> pd.DataFrame:
+    """Public wrapper so API routes can reuse the candle loader."""
 
-    Returns list[dict] shaped to AiSignal in models.py.
-    """
-    df = _load_candles(symbol, interval, limit)
+    return _load_candles(symbol, interval, limit)
+
+
+def generate_ai_signals_from_dataframe(df: pd.DataFrame) -> List[Dict]:
+    """Build AI signals from a prepared candle dataframe."""
 
     signals: List[Dict] = []
 
     for row in df.itertuples():
         close = getattr(row, "close", None)
         if close is None:
-            # if the DataFrame doesn't have a "close" attribute on the row,
-            # fall back to using the numeric close column we computed on.
             close = getattr(row, "close_series", None)
 
-        # but we know the DataFrame has "upper"/"lower"/"ts"
-        upper = getattr(row, "upper")
-        lower = getattr(row, "lower")
-        ts = getattr(row, "ts")
+        upper = getattr(row, "upper", None)
+        lower = getattr(row, "lower", None)
+        ts = getattr(row, "ts", None)
+
+        if ts is None:
+            continue
 
         if pd.isna(upper) or pd.isna(lower):
             side = "flat"
             p_long, p_short, p_flat = 0.33, 0.33, 0.34
-        elif close < lower:
+        elif close is not None and close < lower:
             side = "long"
             p_long, p_short, p_flat = 0.8, 0.1, 0.1
-        elif close > upper:
+        elif close is not None and close > upper:
             side = "short"
             p_long, p_short, p_flat = 0.1, 0.8, 0.1
         else:
@@ -160,3 +158,16 @@ def generate_ai_signals_from_csv(symbol: str, interval: str, limit: int) -> List
         )
 
     return signals
+
+
+def generate_ai_signals_from_csv(symbol: str, interval: str, limit: int) -> List[Dict]:
+    """
+    Placeholder 'AI' logic:
+      - If price < lower band  -> strongly long
+      - If price > upper band  -> strongly short
+      - Otherwise               -> flat
+
+    Returns list[dict] shaped to AiSignal in models.py.
+    """
+    df = _load_candles(symbol, interval, limit)
+    return generate_ai_signals_from_dataframe(df)

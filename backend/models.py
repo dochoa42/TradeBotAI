@@ -1,6 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
+try:
+    from .indicators import IndicatorSpec
+except ImportError:  # pragma: no cover - allow running as script
+    from indicators import IndicatorSpec  # type: ignore
+
 # Intervals your UI uses; map 1:1 to Binance
 Interval = Literal["1m", "5m", "1h", "1d"]
 
@@ -70,6 +75,7 @@ class AiSignalsRequest(BaseModel):
         le=5000,
         description="How many recent bars to return signals for",
     )
+    indicators: Optional[List[IndicatorSpec]] = None
 
 
 class AiSignalsResponse(BaseModel):
@@ -95,6 +101,7 @@ class BacktestRequest(BaseModel):
     fee: Optional[float] = None
     risk_per_trade_percent: Optional[float] = None
     max_daily_loss_percent: Optional[float] = None
+    indicators: Optional[List[IndicatorSpec]] = None
 
 
 

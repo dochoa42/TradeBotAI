@@ -32,8 +32,23 @@ from models import (
 from binance_client import fetch_klines
 from model_service import predict_signals_from_candles
 from backtest import bollinger_backtest, load_candles_dataframe
-from ml.ai_signals import generate_ai_signals_from_csv
 from data_providers import CandleProvider, CsvCandleProvider
+
+try:
+    from .indicators import compute_indicators, IndicatorSpec
+except ImportError:  # pragma: no cover - allow running as script
+    from indicators import compute_indicators, IndicatorSpec  # type: ignore
+
+try:
+    from .ml.ai_signals import (
+        generate_ai_signals_from_dataframe,
+        load_ai_signal_candles,
+    )
+except ImportError:  # pragma: no cover - allow running as script
+    from ml.ai_signals import (  # type: ignore
+        generate_ai_signals_from_dataframe,
+        load_ai_signal_candles,
+    )
 
 
 app = FastAPI(title="Trading Bot 2 Backend", version="0.1.0")
@@ -300,12 +315,32 @@ async def get_ai_signals(req: AiSignalsRequest) -> AiSignalsResponse:
     limit = req.limit
 
     try:
-        signals = generate_ai_signals_from_csv(symbol, interval, limit)
+        df = load_ai_signal_candles(symbol, interval, limit)
     except FileNotFoundError as e:
         raise HTTPException(
             status_code=404,
             detail=str(e) + " – make sure you've run the History Downloader first.",
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI signal history load failed: {e}",
+        )
+
+    indicator_specs: List[IndicatorSpec] = req.indicators or []
+    if indicator_specs:
+        try:
+            df = compute_indicators(df, indicator_specs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Indicator calculation failed: {exc}",
+            ) from exc
+
+    try:
+        signals = generate_ai_signals_from_dataframe(df)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -410,6 +445,18 @@ async def run_backtest_endpoint(
                 status_code=400,
                 detail="No candles returned by Binance for backtest.",
             )
+
+    indicator_specs: List[IndicatorSpec] = req.indicators or []
+    if indicator_specs:
+        try:
+            df = compute_indicators(df, indicator_specs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Indicator calculation failed: {exc}",
+            ) from exc
 
     # 2) Pull TP / SL with defaults
     tp = params.tp if params and params.tp is not None else 100
