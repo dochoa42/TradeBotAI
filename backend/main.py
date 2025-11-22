@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 from pathlib import Path
 from datetime import datetime
@@ -66,6 +66,11 @@ SYMBOL_WHITELIST = {
 
 DEFAULT_STARTING_BALANCE = 2_000.0
 candle_provider: CandleProvider = CsvCandleProvider()
+
+DataProvider = Literal["csv", "api"]
+
+DEFAULT_CANDLES_PROVIDER: DataProvider = "api"
+DEFAULT_BACKTEST_PROVIDER: DataProvider = "csv"
 
 
 def _max_drawdown(values: List[float]) -> float:
@@ -153,9 +158,16 @@ async def get_candles(
     limit: int = Query(500, ge=1, le=1000),
     start_ms: Optional[int] = Query(None, description="Unix ms"),
     end_ms: Optional[int] = Query(None, description="Unix ms"),
+    provider: DataProvider = Query(
+        DEFAULT_CANDLES_PROVIDER,
+        description="Data source: 'api' (Binance live) or 'csv' (local history)",
+    ),
 ):
     """
-    Fetch candles from Binance and normalize to CandleResponse.
+    Fetch candles from Binance or local CSV and normalize to CandleResponse.
+
+    - provider='api' -> Binance (existing behaviour)
+    - provider='csv' -> backend/data/{symbol}_{interval}.csv
     """
     s = symbol.upper()
 
@@ -163,10 +175,51 @@ async def get_candles(
         # You can relax this check, but it's helpful early on
         raise HTTPException(status_code=400, detail=f"Symbol not allowed: {s}")
 
-    try:
-        df = await fetch_klines(s, interval, limit=limit, start_ms=start_ms, end_ms=end_ms)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Binance fetch failed: {e}")
+    # provider = 'csv' -> read from backend/data/{symbol}_{interval}.csv
+    if provider == "csv":
+        data_dir = Path(__file__).parent / "data"
+        csv_path = data_dir / f"{s}_{interval}.csv"
+
+        if not csv_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"CSV history not found for {s} {interval}. "
+                    "Use /api/history/download to fetch it first."
+                ),
+            )
+
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unable to read candles from {csv_path}: {exc}",
+            ) from exc
+
+        if df.empty:
+            return CandleResponse(
+                symbol=s,
+                interval=interval,
+                count=0,
+                candles=[],
+                note="No data found in CSV history for the given parameters.",
+            )
+
+        if limit > 0:
+            df = df.tail(limit)
+        df = df.sort_values("ts")
+    else:
+        # provider = 'api' -> existing Binance flow
+        try:
+            df = await fetch_klines(
+                s, interval, limit=limit, start_ms=start_ms, end_ms=end_ms
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Binance fetch failed: {exc}",
+            ) from exc
 
     records = [
         Candle(
@@ -180,9 +233,9 @@ async def get_candles(
         for row in df.itertuples(index=False)
     ]
 
-    note = None
-    if len(records) == 0:
-        note = "No data returned from Binance for the given parameters."
+    note: Optional[str] = None
+    if not records:
+        note = "No data returned for the given parameters."
 
     return CandleResponse(
         symbol=s,
@@ -307,19 +360,20 @@ async def model_predict(req: ModelPredictRequest) -> ModelPredictResponse:
 
 
 @app.post("/api/backtest", response_model=BacktestResponse)
-async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
+async def run_backtest_endpoint(
+    req: BacktestRequest,
+    provider: DataProvider = Query(
+        DEFAULT_BACKTEST_PROVIDER,
+        description="Data source: 'csv' (local history) or 'api' (Binance live candles)",
+    ),
+) -> BacktestResponse:
     """
-    Run a backtest using historical CSV candles and the Bollinger strategy.
+    Run a backtest using historical candles and the Bollinger strategy.
 
-    Frontend sends:
-        {
-          "symbol": "BTCUSDT",
-          "interval": "1m",
-          "params": { "thr": 50, "tp": 100, "sl": 50, "walkForward": false },
-          "starting_balance": 10000
-        }
+    - provider='csv' -> load from backend/data/{symbol}_{interval}.csv
+    - provider='api' -> fetch candles from Binance on the fly
     """
-    symbol = req.symbol
+    symbol = req.symbol.upper()
     interval = req.interval
     params = req.params
 
@@ -328,21 +382,40 @@ async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
     )
     fee_pct = req.fee if req.fee is not None else 0.0004
 
-    # 1) Load candles via the data provider
-    try:
-        df = load_candles_dataframe(symbol, interval, limit=0, provider=candle_provider)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover - surfaced via API response
-        raise HTTPException(status_code=500, detail=f"Failed to load candles: {exc}") from exc
+    # 1) Load candles via the selected provider
+    if provider == "csv":
+        try:
+            df = load_candles_dataframe(symbol, interval, limit=0, provider=candle_provider)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - surfaced via API response
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load candles: {exc}",
+            ) from exc
+    else:
+        try:
+            # limit=1000 is a reasonable default; tune later if needed
+            df = await fetch_klines(symbol, interval, limit=1000, start_ms=None, end_ms=None)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Binance fetch failed for backtest: {exc}",
+            ) from exc
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="No candles returned by Binance for backtest.",
+            )
 
     # 2) Pull TP / SL with defaults
     tp = params.tp if params and params.tp is not None else 100
     sl = params.sl if params and params.sl is not None else 50
 
-    # 3) Run Bollinger backtest directly on candles (ignore model signals for now)
+    # 3) Run Bollinger backtest directly on candles
     trades_list, equity_series = bollinger_backtest(
         candles=df,
         tp_pct=tp,
@@ -354,15 +427,13 @@ async def run_backtest_endpoint(req: BacktestRequest) -> BacktestResponse:
 
     equity_curve = _equity_curve_from_series(df, equity_series)
     if not equity_curve:
-        fallback_ts = int(df["ts"].iloc[0]) if not df.empty else int(datetime.utcnow().timestamp() * 1000)
+        fallback_ts = int(df["ts"].iloc[0]) if not df.empty else int(
+            datetime.utcnow().timestamp() * 1000
+        )
         equity_curve = [EquityPoint(ts=fallback_ts, equity=float(starting_balance))]
 
     summary = _build_backtest_summary(equity_series, trades_list, starting_balance)
 
-    return BacktestResponse(
-        summary=summary,
-        equity_curve=equity_curve,
-        trades=trades_list,
-    )
+    return BacktestResponse(summary=summary, equity_curve=equity_curve, trades=trades_list)
 
 
