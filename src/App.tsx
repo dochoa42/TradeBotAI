@@ -968,6 +968,7 @@ export default function App() {
           </div>
 
           <div className="flex flex-col gap-2 w-full lg:w-auto lg:items-end">
+            {/* THR / TP / SL inputs */}
             <div className="grid grid-cols-3 gap-2 text-xs sm:text-sm w-full lg:w-auto">
               <label className="flex flex-col gap-1">
                 <span className="opacity-70">THR</span>
@@ -997,6 +998,53 @@ export default function App() {
                 />
               </label>
             </div>
+            <div className="flex flex-wrap items-center gap-2 justify-end text-xs sm:text-sm">
+              <label className="flex items-center gap-2">
+                <span className="opacity-70">Preset</span>
+                <select
+                  value={activePresetId ?? ""}
+                  onChange={(e) => {
+                    const id = e.target.value || null;
+                    setActivePresetId(id);
+                    if (!id) return;
+                    const preset = presets.find((p) => p.id === id);
+                    if (!preset) return;
+                    setThr(preset.thr);
+                    setTp(preset.tp);
+                    setSl(preset.sl);
+                  }}
+                  className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 min-w-[160px]"
+                >
+                  <option value="">No preset</option>
+                  {presetsForCurrent.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={handleSavePreset}
+                className="px-3 py-1.5 rounded-xl border border-indigo-500 text-indigo-100 text-xs sm:text-sm hover:bg-indigo-500/10"
+              >
+                Save preset
+              </button>
+              <button
+                type="button"
+                onClick={handleDeletePreset}
+                disabled={!activePresetId}
+                className="px-3 py-1.5 rounded-xl border border-red-500 text-red-200 text-xs sm:text-sm disabled:opacity-40 hover:bg-red-500/10"
+              >
+                Delete
+              </button>
+              {activePresetLabel && (
+                <span className="text-[11px] text-slate-400 truncate max-w-[220px]">
+                  {activePresetLabel}
+                </span>
+              )}
+            </div>
+            {/* Walk-forward / Run AI / Overlay AI signals */}
             <div className="flex flex-wrap items-center gap-3 justify-end text-xs sm:text-sm">
               <label className="inline-flex items-center gap-1.5">
                 <input
@@ -1026,47 +1074,6 @@ export default function App() {
                     }
                   }}
                   className="rounded"
-                <div className="flex flex-wrap items-center gap-2 justify-end text-xs sm:text-sm">
-                  <label className="flex items-center gap-2">
-                    <span className="opacity-70">Preset</span>
-                    <select
-                      value={activePresetId ?? ""}
-                      onChange={(e) => {
-                        const id = e.target.value || null;
-                        setActivePresetId(id);
-                        if (!id) return;
-                        const preset = presets.find((p) => p.id === id);
-                        if (!preset) return;
-                        setThr(preset.thr);
-                        setTp(preset.tp);
-                        setSl(preset.sl);
-                      }}
-                      className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 min-w-[160px]"
-                    >
-                      <option value="">No preset</option>
-                      {presetsForCurrent.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleSavePreset}
-                    className="px-3 py-1.5 rounded-xl border border-indigo-500 text-indigo-100 text-xs sm:text-sm hover:bg-indigo-500/10"
-                  >
-                    Save preset
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDeletePreset}
-                    disabled={!activePresetId}
-                    className="px-3 py-1.5 rounded-xl border border-red-500 text-red-200 text-xs sm:text-sm disabled:opacity-40 hover:bg-red-500/10"
-                  >
-                    Delete
-                  </button>
-                </div>
                   disabled={isLoadingSignals || !candles.length}
                   aria-label="Overlay AI signals"
                 />
@@ -1079,7 +1086,7 @@ export default function App() {
               </label>
             </div>
             {apiError && (
-              <span className="text-xs text-rose-400" role="alert">
+              <span className="text-xs text-rose-400 mt-1" role="alert">
                 {apiError}
               </span>
             )}
