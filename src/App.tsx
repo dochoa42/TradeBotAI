@@ -777,11 +777,14 @@ export default function App() {
       }
 
       const data = (await res.json()) as AiSignalsResponseApi;
+      const CONF_THRESHOLD = 0.55; // you can tune this later
+
       const normalized: AiSignal[] = data.signals.map((sig) => ({
         ts: sig.ts,
-        signal: sig.signal === 1 && sig.confidence >= 0.5 ? "long" : "flat",
+        signal: sig.confidence >= CONF_THRESHOLD ? "long" : "flat",
         confidence: sig.confidence,
-      }));
+}));
+
       setAiSignals(normalized);
     } catch (err: any) {
       console.error(err);
