@@ -16,12 +16,17 @@ import type {
   ChartPoint,
   Trade,
 } from "./types/trading";
+import { INDICATOR_CATALOG, IndicatorConfig } from "./config/indicatorCatalog";
 
 // =============================================
 // Types & Constants
 // =============================================
 type AppView = "dashboard" | "multichart" | "simulation";
 type DataSource = "csv" | "api";
+type IndicatorSpecClient = {
+  id: string;
+  params: Record<string, number>;
+};
 type StrategyPreset = {
   id: string;
   name: string;
@@ -30,6 +35,7 @@ type StrategyPreset = {
   thr: number;
   tp: number;
   sl: number;
+  indicators: IndicatorSpecClient[];
 };
 
 type Candle = {
@@ -377,6 +383,7 @@ export default function App() {
   const [showSMA, setShowSMA] = useState<boolean>(true);
   const [showEMA, setShowEMA] = useState<boolean>(false);
   const [showBB, setShowBB] = useState<boolean>(true);
+  const [indicatorSelections, setIndicatorSelections] = useState<IndicatorSpecClient[]>([]);
   const smaPeriod = 20;
   const bbStd = 2;
 
@@ -443,7 +450,11 @@ export default function App() {
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        setPresets(parsed);
+        const normalized: StrategyPreset[] = parsed.map((preset: any) => ({
+          ...preset,
+          indicators: Array.isArray(preset?.indicators) ? preset.indicators : [],
+        }));
+        setPresets(normalized);
       }
     } catch (err) {
       console.error("Failed to load strategy presets:", err);
@@ -612,6 +623,10 @@ export default function App() {
       thr,
       tp,
       sl,
+      indicators: indicatorSelections.map((sel) => ({
+        id: sel.id,
+        params: { ...sel.params },
+      })),
     };
 
     setPresets((prev) => {
@@ -634,6 +649,17 @@ export default function App() {
       setIsRunningBacktest(true);
       setApiError(null);
 
+      const indicatorsForBackend = indicatorSelections.map((sel) => {
+        const cfg: IndicatorConfig | undefined = INDICATOR_CATALOG.find(
+          (c) => c.id === sel.id
+        );
+        return {
+          id: sel.id,
+          kind: cfg?.kind ?? "trend",
+          params: sel.params,
+        };
+      });
+
       const body = {
         symbol,
         interval: tf,
@@ -646,6 +672,7 @@ export default function App() {
           starting_balance: startingBalance,
           risk_per_trade_percent: riskPerTradePct,
           max_daily_loss_percent: maxDailyLossPct,
+        indicators: indicatorsForBackend,
       };
 
       const res = await fetch(`${API_BASE}/api/backtest?provider=${dataSource}`, {
@@ -965,6 +992,39 @@ export default function App() {
                 <span>Boll ±2σ</span>
               </label>
             </div>
+            <div className="flex flex-col gap-2 text-xs sm:text-sm mt-2 w-full lg:w-auto">
+              <span className="uppercase tracking-wider text-slate-400">Indicators</span>
+              <div className="flex flex-wrap gap-2">
+                {INDICATOR_CATALOG.map((ind) => {
+                  const isActive = indicatorSelections.some((s) => s.id === ind.id);
+                  return (
+                    <button
+                      key={ind.id}
+                      type="button"
+                      onClick={() => {
+                        setIndicatorSelections((prev) => {
+                          const already = prev.some((s) => s.id === ind.id);
+                          if (already) {
+                            return prev.filter((s) => s.id !== ind.id);
+                          }
+                          return [
+                            ...prev,
+                            { id: ind.id, params: { ...ind.defaultParams } },
+                          ];
+                        });
+                      }}
+                      className={`px-3 py-1.5 rounded-xl border text-xs ${
+                        isActive
+                          ? "bg-indigo-600/30 border-indigo-500 text-indigo-100"
+                          : "border-neutral-700 text-slate-300 hover:border-neutral-500"
+                      }`}
+                    >
+                      {ind.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2 w-full lg:w-auto lg:items-end">
@@ -1012,6 +1072,7 @@ export default function App() {
                     setThr(preset.thr);
                     setTp(preset.tp);
                     setSl(preset.sl);
+                    setIndicatorSelections(preset.indicators ?? []);
                   }}
                   className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 min-w-[160px]"
                 >
