@@ -6,10 +6,11 @@ Purely in-memory paper trading state that resets whenever the backend restarts.
 from __future__ import annotations
 
 from datetime import date
-from typing import Dict
+from typing import Dict, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from models import (
     LiveOrder,
@@ -18,6 +19,14 @@ from models import (
     PlacePaperOrderRequest,
     CancelPaperOrderRequest,
     TradingMode,
+)
+from risk import (
+    RISK_CONFIG,
+    risk_check,
+    get_kill_switch_state,
+    set_kill_switch,
+    RiskConfig,
+    KillSwitchState,
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -46,12 +55,18 @@ def _compute_daily_pnl() -> float:
 
 def _status() -> LiveStatus:
     _ensure_daily_reset()
+    ks = get_kill_switch_state()
     return LiveStatus(
         mode=CURRENT_MODE,
         equity=_paper_equity,
         daily_pnl=_compute_daily_pnl(),
         positions=list(_paper_positions.values()),
         orders=list(_paper_orders.values()),
+        kill_switch_tripped=ks.tripped,
+        kill_switch_reason=ks.reason,
+        daily_loss_limit=RISK_CONFIG.max_daily_loss,
+        max_position_size=RISK_CONFIG.max_position_size,
+        max_open_positions=RISK_CONFIG.max_open_positions,
     )
 
 
@@ -63,6 +78,14 @@ async def get_paper_status() -> LiveStatus:
 
 @router.post("/paper/place_order", response_model=LiveStatus)
 async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
+    global _paper_equity
+
+    # Phase 10.2: central risk manager gate
+    current_status = _status()
+    decision = risk_check(current_status, req, CURRENT_MODE)
+    if not decision.allowed:
+        return _status()
+
     price = req.price if req.price is not None else 0.0
     order_id = str(uuid4())
     pos_side = "long" if req.side == "buy" else "short"
@@ -114,3 +137,26 @@ async def cancel_paper_order(req: CancelPaperOrderRequest) -> LiveStatus:
     if order and order.status == "new":
         _paper_orders[req.order_id] = LiveOrder(**{**order.dict(), "status": "canceled"})
     return _status()
+
+
+@router.get("/paper/kill-switch", response_model=KillSwitchState)
+async def get_paper_kill_switch() -> KillSwitchState:
+    """Return the current kill switch state for paper/live trading."""
+    return get_kill_switch_state()
+
+
+class KillSwitchToggleRequest(BaseModel):
+    tripped: bool
+    reason: Optional[str] = None
+
+
+@router.post("/paper/kill-switch", response_model=KillSwitchState)
+async def set_paper_kill_switch_state(body: KillSwitchToggleRequest) -> KillSwitchState:
+    """Manually toggle the kill switch from the UI (Phase 10.2)."""
+    return set_kill_switch(body.tripped, body.reason)
+
+
+@router.get("/paper/risk-config", response_model=RiskConfig)
+async def get_paper_risk_config() -> RiskConfig:
+    """Return the current paper trading risk configuration."""
+    return RISK_CONFIG
