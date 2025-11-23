@@ -5,6 +5,7 @@ import {
   placePaperOrder,
   cancelPaperOrder,
   toggleKillSwitch,
+  flattenPaperPosition,
 } from "../api/liveTrading";
 
 const formatNumber = (value: number | null | undefined, digits = 2): string => {
@@ -96,6 +97,29 @@ export const LiveTradingPanel: React.FC = () => {
     try {
       setLoading(true);
       const updated = await cancelPaperOrder(orderId);
+      setStatus(updated);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleFlattenPosition(symbol: string, side: "long" | "short") {
+    if (!status) return;
+    const raw = window.prompt(
+      `Exit price to flatten ${symbol} (${side})?`,
+      status ? String(status.equity) : undefined
+    );
+    if (!raw) return;
+    const exitPrice = Number(raw);
+    if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+      setError("Invalid exit price");
+      return;
+    }
+    try {
+      setLoading(true);
+      const updated = await flattenPaperPosition(symbol, side, exitPrice);
       setStatus(updated);
     } catch (err) {
       setError((err as Error).message);
@@ -311,6 +335,7 @@ export const LiveTradingPanel: React.FC = () => {
                       <th className="py-2 pr-4">Entry</th>
                       <th className="py-2 pr-4">Current</th>
                       <th className="py-2 pr-4">Unrealized PnL</th>
+                      <th className="py-2 pr-4 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -333,6 +358,16 @@ export const LiveTradingPanel: React.FC = () => {
                         <td className="py-2 pr-4">{formatNumber(position.current_price)}</td>
                         <td className={`py-2 pr-4 font-semibold ${formatPnlClass(position.unrealized_pnl)}`}>
                           {formatNumber(position.unrealized_pnl)}
+                        </td>
+                        <td className="py-2 pr-4 text-right">
+                          <button
+                            type="button"
+                            className="rounded-md px-3 py-1 text-xs font-medium bg-red-600 text-white hover:bg-red-500 disabled:opacity-50"
+                            onClick={() => handleFlattenPosition(position.symbol, position.side)}
+                            disabled={loading || status.kill_switch_tripped}
+                          >
+                            Flatten
+                          </button>
                         </td>
                       </tr>
                     ))}

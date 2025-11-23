@@ -19,6 +19,7 @@ from models import (
     PlacePaperOrderRequest,
     CancelPaperOrderRequest,
     TradingMode,
+    FlattenPaperPositionRequest,
 )
 from risk import (
     RISK_CONFIG,
@@ -68,6 +69,24 @@ def _status() -> LiveStatus:
         max_position_size=RISK_CONFIG.max_position_size,
         max_open_positions=RISK_CONFIG.max_open_positions,
     )
+
+
+def _flatten_position(req: FlattenPaperPositionRequest) -> None:
+    """Close a paper position and update equity using realized PnL."""
+    global _paper_equity
+
+    pos_key = f"{req.symbol}:{req.side}"
+    pos = _paper_positions.get(pos_key)
+    if not pos or pos.size <= 0:
+        return
+
+    if req.side == "long":
+        pnl = (req.exit_price - pos.entry_price) * pos.size
+    else:
+        pnl = (pos.entry_price - req.exit_price) * pos.size
+
+    _paper_equity += pnl
+    del _paper_positions[pos_key]
 
 
 @router.get("/paper/status", response_model=LiveStatus)
@@ -160,3 +179,10 @@ async def set_paper_kill_switch_state(body: KillSwitchToggleRequest) -> KillSwit
 async def get_paper_risk_config() -> RiskConfig:
     """Return the current paper trading risk configuration."""
     return RISK_CONFIG
+
+
+@router.post("/paper/flatten", response_model=LiveStatus)
+async def flatten_paper_position(req: FlattenPaperPositionRequest) -> LiveStatus:
+    """Flatten a paper position at a provided exit price."""
+    _flatten_position(req)
+    return _status()

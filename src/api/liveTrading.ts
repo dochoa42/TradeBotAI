@@ -63,3 +63,19 @@ export async function toggleKillSwitch(
   }
   return res.json();
 }
+
+export async function flattenPaperPosition(
+  symbol: string,
+  side: "long" | "short",
+  exitPrice: number
+): Promise<LiveStatus> {
+  const res = await fetch(`${BASE_URL}/paper/flatten`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, side, exit_price: exitPrice }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to flatten position: ${res.status}`);
+  }
+  return res.json();
+}

@@ -212,3 +212,9 @@ class PlacePaperOrderRequest(BaseModel):
 class CancelPaperOrderRequest(BaseModel):
     order_id: str
 
+
+class FlattenPaperPositionRequest(BaseModel):
+    symbol: str
+    side: Literal["long", "short"]
+    exit_price: float
+
