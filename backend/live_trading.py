@@ -29,6 +29,10 @@ from risk import (
     RiskConfig,
     KillSwitchState,
 )
+from storage import (
+    record_paper_trade,
+    record_equity_snapshot,
+)
 
 router = APIRouter(prefix="/api/live", tags=["live"])
 
@@ -57,7 +61,7 @@ def _compute_daily_pnl() -> float:
 def _status() -> LiveStatus:
     _ensure_daily_reset()
     ks = get_kill_switch_state()
-    return LiveStatus(
+    status = LiveStatus(
         mode=CURRENT_MODE,
         equity=_paper_equity,
         daily_pnl=_compute_daily_pnl(),
@@ -69,6 +73,8 @@ def _status() -> LiveStatus:
         max_position_size=RISK_CONFIG.max_position_size,
         max_open_positions=RISK_CONFIG.max_open_positions,
     )
+    record_equity_snapshot(status.equity, status.daily_pnl)
+    return status
 
 
 def _flatten_position(req: FlattenPaperPositionRequest) -> None:
@@ -86,6 +92,14 @@ def _flatten_position(req: FlattenPaperPositionRequest) -> None:
         pnl = (pos.entry_price - req.exit_price) * pos.size
 
     _paper_equity += pnl
+    record_paper_trade(
+        symbol=pos.symbol,
+        side=pos.side,
+        qty=pos.size,
+        entry_price=pos.entry_price,
+        exit_price=req.exit_price,
+        pnl=pnl,
+    )
     del _paper_positions[pos_key]
 
 
