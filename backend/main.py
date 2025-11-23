@@ -337,27 +337,64 @@ async def download_history(req: HistoryDownloadRequest) -> HistoryDownloadRespon
 
 
 @app.post("/api/ai/signals", response_model=AiSignalsResponse)
-async def get_ai_signals(req: AiSignalsRequest) -> AiSignalsResponse:
+async def get_ai_signals(
+    req: AiSignalsRequest,
+    provider: DataProvider = Query(
+        DEFAULT_CANDLES_PROVIDER,
+        description="Data source: 'api' (Binance live) or 'csv' (local history)",
+    ),
+) -> AiSignalsResponse:
     """Serve AI signals using the trained model payload."""
 
     symbol = req.symbol.upper()
     interval = req.interval
 
-    try:
-        df = load_candles_dataframe(symbol, interval, limit=req.limit, provider=candle_provider)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover - surfaced via API response
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load candles for AI signals: {exc}",
-        ) from exc
+    # 1) Load candles based on provider (mirrors /api/backtest)
+    if provider == "csv":
+        try:
+            df = load_candles_dataframe(
+                symbol,
+                interval,
+                limit=req.limit,
+                provider=CsvCandleProvider(),
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load candles for AI signals: {exc}",
+            ) from exc
+    else:
+        try:
+            df = await fetch_klines(
+                symbol,
+                interval,
+                limit=req.limit or 500,
+                start_ms=None,
+                end_ms=None,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Binance fetch failed for AI signals: {exc}",
+            ) from exc
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="No candles returned by Binance for AI signals.",
+            )
 
     if df.empty:
-        raise HTTPException(status_code=400, detail="No candles available for AI signals.")
+        raise HTTPException(
+            status_code=400,
+            detail="No candles available for AI signals.",
+        )
 
+    # 2) Indicators (unchanged)
     indicator_specs: List[IndicatorSpec] = req.indicators or []
     if indicator_specs:
         try:
@@ -370,6 +407,7 @@ async def get_ai_signals(req: AiSignalsRequest) -> AiSignalsResponse:
                 detail=f"Indicator calculation failed: {exc}",
             ) from exc
 
+    # 3) Model checks + inference (unchanged)
     if ai_model is None or ai_feature_cols is None:
         raise HTTPException(
             status_code=503,
@@ -407,7 +445,10 @@ async def get_ai_signals(req: AiSignalsRequest) -> AiSignalsResponse:
             preds = ai_model.predict(X)
             confidences = np.ones_like(preds, dtype=float)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI model inference failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI model inference failed: {exc}"
+        ) from exc
 
     signals = [
         {

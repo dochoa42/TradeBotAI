@@ -514,7 +514,7 @@ export default function App() {
       void loadAiSignals();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, tf, showAiSignals]);
+  }, [symbol, tf, dataSource, showAiSignals]);
 
   const multiChartFetchKey = useMemo(() => {
     return multiCharts
@@ -762,7 +762,9 @@ export default function App() {
       setIsLoadingSignals(true);
       setApiError(null);
 
-      const res = await fetch(`${API_BASE}/api/ai/signals`, {
+      const res = await fetch(
+      `${API_BASE}/api/ai/signals?provider=${dataSource}`,
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
