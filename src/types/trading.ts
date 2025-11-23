@@ -52,3 +52,49 @@ export type MultiChartState = {
   error: string | null;
   detached?: boolean;
 };
+
+// ============================
+// Live / Paper Trading (Phase 10)
+// ============================
+
+export type TradingMode = "backtest" | "paper" | "live";
+
+export interface LivePosition {
+  symbol: string;
+  side: "long" | "short";
+  size: number;
+  entry_price: number;
+  current_price: number;
+  unrealized_pnl: number;
+}
+
+export interface LiveOrder {
+  id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  type: "market" | "limit";
+  price?: number | null;
+  status: "new" | "filled" | "canceled";
+}
+
+export interface LiveStatus {
+  mode: TradingMode;
+  equity: number;
+  daily_pnl: number;
+  positions: LivePosition[];
+  orders: LiveOrder[];
+  kill_switch_tripped: boolean;
+  kill_switch_reason?: string | null;
+  daily_loss_limit?: number | null;
+  max_position_size?: number | null;
+  max_open_positions?: number | null;
+}
+
+export interface PlacePaperOrderRequest {
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  type?: "market" | "limit";
+  price?: number;
+}
