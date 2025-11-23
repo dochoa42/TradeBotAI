@@ -35,6 +35,7 @@ from binance_client import fetch_klines
 from model_service import predict_signals_from_candles
 from backtest import bollinger_backtest, load_candles_dataframe
 from data_providers import CandleProvider, CsvCandleProvider
+from live_trading import router as live_router
 
 try:
     from .indicators import compute_indicators, IndicatorSpec
@@ -57,6 +58,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(live_router)
 
 # Simple whitelist for safety (expand as needed)
 SYMBOL_WHITELIST = {

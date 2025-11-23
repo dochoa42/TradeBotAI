@@ -65,6 +65,7 @@ async def get_paper_status() -> LiveStatus:
 async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     price = req.price if req.price is not None else 0.0
     order_id = str(uuid4())
+    pos_side = "long" if req.side == "buy" else "short"
     order = LiveOrder(
         id=order_id,
         symbol=req.symbol,
@@ -76,7 +77,7 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     )
     _paper_orders[order_id] = order
 
-    pos_key = f"{req.symbol}:{req.side}"
+    pos_key = f"{req.symbol}:{pos_side}"
     existing = _paper_positions.get(pos_key)
     if existing:
         total_qty = existing.size + req.qty
@@ -88,7 +89,7 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
             weighted_price = existing.entry_price
         _paper_positions[pos_key] = LivePosition(
             symbol=req.symbol,
-            side=req.side,
+            side=pos_side,
             size=total_qty,
             entry_price=weighted_price,
             current_price=weighted_price,
@@ -97,7 +98,7 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     else:
         _paper_positions[pos_key] = LivePosition(
             symbol=req.symbol,
-            side=req.side,
+            side=pos_side,
             size=req.qty,
             entry_price=price,
             current_price=price,
