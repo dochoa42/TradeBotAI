@@ -12,10 +12,7 @@ const formatNumber = (value: number | null | undefined, digits = 2): string => {
   if (!Number.isFinite(value ?? NaN)) {
     return "-";
   }
-  return Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
+  return (value ?? 0).toFixed(digits);
 };
 
 const formatPnlClass = (value: number | null | undefined): string => {
@@ -154,7 +151,19 @@ export const LiveTradingPanel: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex h-full flex-col gap-4">
+      {/* Phase 10.7 - Mode information banner */}
+      <div className="rounded-md border border-amber-500/60 bg-amber-900/30 px-4 py-2 text-xs text-amber-100">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-semibold">Paper Mode Only</div>
+          <div className="text-[11px] opacity-90">
+            Live trading is currently <span className="font-semibold">disabled</span>.{" "}
+            Orders placed from this panel run in the internal paper engine with Phase 10
+            risk and kill-switch protection.
+          </div>
+        </div>
+      </div>
+
       {error && (
         <div className="text-sm text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">
           {error}
