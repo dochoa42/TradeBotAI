@@ -1,4 +1,9 @@
-import { LiveStatus, PlacePaperOrderRequest } from "../types/trading";
+import {
+  LiveStatus,
+  PlacePaperOrderRequest,
+  PaperTradeRecord,
+  EquitySnapshot,
+} from "../types/trading";
 
 type KillSwitchState = {
   tripped: boolean;
@@ -76,6 +81,26 @@ export async function flattenPaperPosition(
   });
   if (!res.ok) {
     throw new Error(`Failed to flatten position: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPaperTrades(
+  limit = 100
+): Promise<PaperTradeRecord[]> {
+  const res = await fetch(`/api/live/paper/trades?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch paper trades: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchEquityHistory(
+  limit = 200
+): Promise<EquitySnapshot[]> {
+  const res = await fetch(`/api/live/paper/equity-history?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch equity history: ${res.status}`);
   }
   return res.json();
 }

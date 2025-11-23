@@ -98,3 +98,23 @@ export interface PlacePaperOrderRequest {
   type?: "market" | "limit";
   price?: number;
 }
+
+// ============================
+// Paper trading history (Phase 10.8)
+// ============================
+
+export interface PaperTradeRecord {
+  ts: string; // ISO timestamp from backend
+  symbol: string;
+  side: string;
+  qty: number;
+  entry_price: number;
+  exit_price: number;
+  pnl: number;
+}
+
+export interface EquitySnapshot {
+  ts: string; // ISO timestamp from backend
+  equity: number;
+  daily_pnl: number;
+}

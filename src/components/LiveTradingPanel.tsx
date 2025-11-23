@@ -1,12 +1,28 @@
-import React, { useEffect, useState } from "react";
-import { LiveStatus, PlacePaperOrderRequest } from "../types/trading";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  LiveStatus,
+  PlacePaperOrderRequest,
+  PaperTradeRecord,
+  EquitySnapshot,
+} from "../types/trading";
 import {
   fetchPaperStatus,
   placePaperOrder,
   cancelPaperOrder,
   toggleKillSwitch,
   flattenPaperPosition,
+  fetchPaperTrades,
+  fetchEquityHistory,
 } from "../api/liveTrading";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from "recharts";
 
 const formatNumber = (value: number | null | undefined, digits = 2): string => {
   if (!Number.isFinite(value ?? NaN)) {
@@ -35,15 +51,36 @@ export const LiveTradingPanel: React.FC = () => {
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [price, setPrice] = useState<number | undefined>(undefined);
   const [killSwitchBusy, setKillSwitchBusy] = useState(false);
+  const [tradeHistory, setTradeHistory] = useState<PaperTradeRecord[]>([]);
+  const [equityHistory, setEquityHistory] = useState<EquitySnapshot[]>([]);
+
+  const equityChartData = useMemo(
+    () =>
+      equityHistory
+        .slice()
+        .reverse()
+        .map((pt) => ({
+          ts: pt.ts,
+          label: new Date(pt.ts).toLocaleTimeString(),
+          equity: pt.equity,
+        })),
+    [equityHistory]
+  );
 
   useEffect(() => {
     let active = true;
 
-    async function load() {
+    async function loadAll() {
       try {
-        const data = await fetchPaperStatus();
+        const [statusData, tradesData, equityData] = await Promise.all([
+          fetchPaperStatus(),
+          fetchPaperTrades(50),
+          fetchEquityHistory(100),
+        ]);
         if (active) {
-          setStatus(data);
+          setStatus(statusData);
+          setTradeHistory(tradesData);
+          setEquityHistory(equityData);
           setError(null);
         }
       } catch (err) {
@@ -53,8 +90,8 @@ export const LiveTradingPanel: React.FC = () => {
       }
     }
 
-    load();
-    const id = window.setInterval(load, 4000);
+    loadAll();
+    const id = window.setInterval(loadAll, 10000);
     return () => {
       active = false;
       window.clearInterval(id);
@@ -66,6 +103,19 @@ export const LiveTradingPanel: React.FC = () => {
       setPrice(undefined);
     }
   }, [orderType]);
+
+  async function refreshHistory() {
+    try {
+      const [tradesData, equityData] = await Promise.all([
+        fetchPaperTrades(50),
+        fetchEquityHistory(100),
+      ]);
+      setTradeHistory(tradesData);
+      setEquityHistory(equityData);
+    } catch (err) {
+      // Ignore history refresh errors for now; status polling will retry later.
+    }
+  }
 
   async function handlePlaceOrder(e: React.FormEvent) {
     e.preventDefault();
@@ -83,6 +133,7 @@ export const LiveTradingPanel: React.FC = () => {
 
       const updated = await placePaperOrder(body);
       setStatus(updated);
+      await refreshHistory();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -95,6 +146,7 @@ export const LiveTradingPanel: React.FC = () => {
       setLoading(true);
       const updated = await cancelPaperOrder(orderId);
       setStatus(updated);
+      await refreshHistory();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -118,6 +170,7 @@ export const LiveTradingPanel: React.FC = () => {
       setLoading(true);
       const updated = await flattenPaperPosition(symbol, side, exitPrice);
       setStatus(updated);
+      await refreshHistory();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -298,31 +351,67 @@ export const LiveTradingPanel: React.FC = () => {
               </button>
             </form>
 
-            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3">
-              <h3 className="text-lg font-semibold text-slate-100">Risk / Limits</h3>
-              <dl className="text-sm text-slate-300 space-y-2">
-                {status.daily_loss_limit != null && (
-                  <div className="flex justify-between">
-                    <dt>Daily Loss Limit</dt>
-                    <dd>{formatNumber(status.daily_loss_limit)}</dd>
+            <div className="space-y-4">
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3">
+                <h3 className="text-lg font-semibold text-slate-100">Risk / Limits</h3>
+                <dl className="text-sm text-slate-300 space-y-2">
+                  {status.daily_loss_limit != null && (
+                    <div className="flex justify-between">
+                      <dt>Daily Loss Limit</dt>
+                      <dd>{formatNumber(status.daily_loss_limit)}</dd>
+                    </div>
+                  )}
+                  {status.max_position_size != null && (
+                    <div className="flex justify-between">
+                      <dt>Max Position Size</dt>
+                      <dd>{formatNumber(status.max_position_size, 4)}</dd>
+                    </div>
+                  )}
+                  {status.max_open_positions != null && (
+                    <div className="flex justify-between">
+                      <dt>Max Open Positions</dt>
+                      <dd>{status.max_open_positions}</dd>
+                    </div>
+                  )}
+                </dl>
+                <p className="text-xs text-slate-400">
+                  Paper engine only – no real orders are sent.
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                  Equity Curve (Paper)
+                </div>
+                {equityChartData.length === 0 ? (
+                  <div className="text-xs text-slate-500">
+                    No equity history yet. Place and flatten some paper trades to build an equity curve.
+                  </div>
+                ) : (
+                  <div className="h-40">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={equityChartData}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                        <XAxis dataKey="label" hide />
+                        <YAxis
+                          domain={["auto", "auto"]}
+                          tick={{ fontSize: 10, fill: "#9ca3af" }}
+                        />
+                        <Tooltip
+                          formatter={(value: any) => [`${value}`, "Equity"]}
+                          labelFormatter={(label) => new Date(label).toLocaleString()}
+                          contentStyle={{ fontSize: 11 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="equity"
+                          dot={false}
+                          strokeWidth={1.5}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
                 )}
-                {status.max_position_size != null && (
-                  <div className="flex justify-between">
-                    <dt>Max Position Size</dt>
-                    <dd>{formatNumber(status.max_position_size, 4)}</dd>
-                  </div>
-                )}
-                {status.max_open_positions != null && (
-                  <div className="flex justify-between">
-                    <dt>Max Open Positions</dt>
-                    <dd>{status.max_open_positions}</dd>
-                  </div>
-                )}
-              </dl>
-              <p className="text-xs text-slate-400">
-                Paper engine only – no real orders are sent.
-              </p>
+              </div>
             </div>
           </div>
 
@@ -450,6 +539,62 @@ export const LiveTradingPanel: React.FC = () => {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+            <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-300">
+              <span>Trade History (Paper)</span>
+              <span className="text-[11px] text-slate-500">
+                Showing last {tradeHistory.length} trades
+              </span>
+            </div>
+            {tradeHistory.length === 0 ? (
+              <div className="text-xs text-slate-500">No paper trades recorded yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="border-b border-slate-700 text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Time</th>
+                      <th className="px-4 py-2">Symbol</th>
+                      <th className="px-4 py-2">Side</th>
+                      <th className="px-4 py-2 text-right">Qty</th>
+                      <th className="px-4 py-2 text-right">Entry</th>
+                      <th className="px-4 py-2 text-right">Exit</th>
+                      <th className="px-4 py-2 text-right">PnL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tradeHistory.map((t) => {
+                      const pnlClass =
+                        t.pnl > 0
+                          ? "text-emerald-400"
+                          : t.pnl < 0
+                          ? "text-rose-400"
+                          : "text-slate-100";
+                      return (
+                        <tr
+                          key={`${t.ts}-${t.symbol}-${t.side}`}
+                          className="border-b border-slate-800/60 last:border-0"
+                        >
+                          <td className="px-4 py-2 text-slate-400">
+                            {new Date(t.ts).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2">{t.symbol}</td>
+                          <td className="px-4 py-2">{t.side}</td>
+                          <td className="px-4 py-2 text-right">{t.qty.toFixed(4)}</td>
+                          <td className="px-4 py-2 text-right">{t.entry_price.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right">{t.exit_price.toFixed(2)}</td>
+                          <td className={`px-4 py-2 text-right ${pnlClass}`}>
+                            {t.pnl.toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

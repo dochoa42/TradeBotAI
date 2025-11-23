@@ -6,7 +6,7 @@ Purely in-memory paper trading state that resets whenever the backend restarts.
 from __future__ import annotations
 
 from datetime import date
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from uuid import uuid4
 
 from fastapi import APIRouter
@@ -20,6 +20,8 @@ from models import (
     CancelPaperOrderRequest,
     TradingMode,
     FlattenPaperPositionRequest,
+    PaperTradeRecord,
+    EquitySnapshot,
 )
 from risk import (
     RISK_CONFIG,
@@ -32,6 +34,8 @@ from risk import (
 from storage import (
     record_paper_trade,
     record_equity_snapshot,
+    fetch_recent_trades,
+    fetch_equity_history,
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -202,3 +206,39 @@ async def flatten_paper_position(req: FlattenPaperPositionRequest) -> LiveStatus
     """Flatten a paper position at a provided exit price."""
     _flatten_position(req)
     return _status()
+
+
+@router.get("/paper/trades", response_model=List[PaperTradeRecord])
+async def get_paper_trades(limit: int = 100) -> List[PaperTradeRecord]:
+    """
+    Return recent paper trades (most recent first).
+    """
+    rows = list(fetch_recent_trades(limit=limit))
+    return [
+        PaperTradeRecord(
+            ts=row[0],
+            symbol=row[1],
+            side=row[2],
+            qty=row[3],
+            entry_price=row[4],
+            exit_price=row[5],
+            pnl=row[6],
+        )
+        for row in rows
+    ]
+
+
+@router.get("/paper/equity-history", response_model=List[EquitySnapshot])
+async def get_paper_equity_history(limit: int = 200) -> List[EquitySnapshot]:
+    """
+    Return recent equity snapshots for charting the paper equity curve.
+    """
+    rows = list(fetch_equity_history(limit=limit))
+    return [
+        EquitySnapshot(
+            ts=row[0],
+            equity=row[1],
+            daily_pnl=row[2],
+        )
+        for row in rows
+    ]

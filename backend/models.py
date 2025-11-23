@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
@@ -217,4 +218,20 @@ class FlattenPaperPositionRequest(BaseModel):
     symbol: str
     side: Literal["long", "short"]
     exit_price: float
+
+
+class PaperTradeRecord(BaseModel):
+    ts: datetime
+    symbol: str
+    side: str
+    qty: float
+    entry_price: float
+    exit_price: float
+    pnl: float
+
+
+class EquitySnapshot(BaseModel):
+    ts: datetime
+    equity: float
+    daily_pnl: float
 
