@@ -193,6 +193,12 @@ class LiveStatus(BaseModel):
     daily_pnl: float
     positions: List[LivePosition] = []
     orders: List[LiveOrder] = []
+    # Phase 10.2 – risk and kill switch surface
+    kill_switch_tripped: bool = False
+    kill_switch_reason: Optional[str] = None
+    daily_loss_limit: Optional[float] = None
+    max_position_size: Optional[float] = None
+    max_open_positions: Optional[int] = None
 
 
 class PlacePaperOrderRequest(BaseModel):
