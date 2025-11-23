@@ -36,6 +36,8 @@ from storage import (
 
 router = APIRouter(prefix="/api/live", tags=["live"])
 
+# Phase 10.6: UI "Live Trading" tab uses paper mode only.
+# Actual live trading will be wired later and gated by risk.LIVE_TRADING_ENABLED.
 CURRENT_MODE: TradingMode = "paper"
 _paper_equity: float = 2000.0
 _paper_start_of_day_equity: float = _paper_equity

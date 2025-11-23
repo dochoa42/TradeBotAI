@@ -29,6 +29,10 @@ class RiskDecision(BaseModel):
     kill_switch_tripped: bool = False
 
 
+# Phase 10.6 - explicit live trading enable flag (defaults to False for safety)
+# Live trading will only be enabled once this is deliberately set to True and a real broker integration is wired.
+LIVE_TRADING_ENABLED = False
+
 # Global config and kill-switch state (module-level singletons)
 RISK_CONFIG = RiskConfig()
 KILL_SWITCH = KillSwitchState()
@@ -75,13 +79,16 @@ def risk_check(
             kill_switch_tripped=False,
         )
 
-    # 3) For now, block live mode completely (we'll relax this later)
+    # 3) Live mode gated by explicit enable flag
     if mode == "live":
-        return RiskDecision(
-            allowed=False,
-            reason="live mode not enabled yet",
-            kill_switch_tripped=False,
-        )
+        if not LIVE_TRADING_ENABLED:
+            return RiskDecision(
+                allowed=False,
+                reason="live trading disabled by configuration",
+                kill_switch_tripped=False,
+            )
+        # When LIVE_TRADING_ENABLED becomes True in the future,
+        # additional live-mode risk checks can go here before allowing.
 
     # 4) Paper mode risk checks
     # Daily loss limit (note: daily_pnl is negative when losing)
