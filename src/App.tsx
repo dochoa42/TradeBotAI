@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { SimulationDesk } from "./components/SimulationDesk";
 import DashboardView from "./components/DashboardView";
 import MultiChartGrid from "./components/MultiChartGrid";
+import LiveTradingPanel from "./components/LiveTradingPanel";
 import TvCandles, { TvMarkerData, TvOverlayLine } from "./components/TvCandles";
 import type {
   IndicatorToggle,
@@ -21,7 +22,7 @@ import { INDICATOR_CATALOG, IndicatorConfig } from "./config/indicatorCatalog";
 // =============================================
 // Types & Constants
 // =============================================
-type AppView = "dashboard" | "multichart" | "simulation";
+type AppView = "dashboard" | "multichart" | "simulation" | "live";
 type DataSource = "csv" | "api";
 type IndicatorSpecClient = {
   id: string;
@@ -130,12 +131,14 @@ const NAV_ITEMS: { key: AppView; label: string; hint: string }[] = [
   { key: "dashboard", label: "Dashboard", hint: "Overview" },
   { key: "multichart", label: "Multi-Chart Grid", hint: "Compare symbols" },
   { key: "simulation", label: "Simulation Desk", hint: "Playback" },
+  { key: "live", label: "Live Trading", hint: "Paper engine" },
 ];
 
 const VIEW_TITLES: Record<AppView, string> = {
   dashboard: "Dashboard",
   multichart: "Multi-Chart Grid",
   simulation: "Simulation Desk",
+  live: "Live Trading",
 };
 
 // =============================================
@@ -327,7 +330,7 @@ function getInitialView(): AppView {
   if (typeof window === "undefined") return "dashboard";
   const params = new URLSearchParams(window.location.search);
   const v = params.get("view");
-  if (v === "multichart" || v === "simulation" || v === "dashboard") {
+  if (v === "multichart" || v === "simulation" || v === "dashboard" || v === "live") {
     return v;
   }
   return "dashboard";
@@ -1267,6 +1270,14 @@ export default function App() {
     </section>
   );
 
+  const liveTradingSection = (
+    <section className="max-w-7xl mx-auto px-4 mt-6">
+      <div className="rounded-2xl bg-neutral-900/80 border border-neutral-800 p-6">
+        <LiveTradingPanel />
+      </div>
+    </section>
+  );
+
   const footerSection = (
     <footer className="max-w-7xl mx-auto px-4 py-6 opacity-60 text-xs">
       <div>
@@ -1289,6 +1300,9 @@ export default function App() {
           {simulationSection}
         </>
       );
+      break;
+    case "live":
+      viewContent = <>{liveTradingSection}</>;
       break;
     default:
       viewContent = (
