@@ -164,3 +164,45 @@ class BacktestResponse(BaseModel):
     equity_curve: List[EquityPoint]
     trades: list[Trade] = []
 
+
+TradingMode = Literal["backtest", "paper", "live"]
+
+
+class LivePosition(BaseModel):
+    symbol: str
+    side: Literal["long", "short"]
+    size: float
+    entry_price: float
+    current_price: float
+    unrealized_pnl: float
+
+
+class LiveOrder(BaseModel):
+    id: str
+    symbol: str
+    side: Literal["buy", "sell"]
+    qty: float
+    type: Literal["market", "limit"]
+    price: Optional[float] = None
+    status: Literal["new", "filled", "canceled"]
+
+
+class LiveStatus(BaseModel):
+    mode: TradingMode
+    equity: float
+    daily_pnl: float
+    positions: List[LivePosition] = []
+    orders: List[LiveOrder] = []
+
+
+class PlacePaperOrderRequest(BaseModel):
+    symbol: str
+    side: Literal["buy", "sell"]
+    qty: float
+    type: Literal["market", "limit"] = "market"
+    price: Optional[float] = None
+
+
+class CancelPaperOrderRequest(BaseModel):
+    order_id: str
+
