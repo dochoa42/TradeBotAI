@@ -1,61 +1,82 @@
-"""
-Phase 10.6 - Broker client skeleton.
-This will be extended to talk to a real exchange (e.g. Binance, Tradovate).
-For now, it just defines the interface and returns dummy values.
-"""
+"""Broker client protocol definitions for future Alpaca adapter support."""
 
-from typing import Optional, List
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+
+
+class BrokerSide(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
+
+
+class BrokerOrderType(str, Enum):
+    MARKET = "market"
+    LIMIT = "limit"
+
+
+class BrokerTimeInForce(str, Enum):
+    DAY = "day"
+    GTC = "gtc"
+    IOC = "ioc"
+    FOK = "fok"
 
 
 class BrokerOrder(BaseModel):
     id: str
     symbol: str
-    side: str  # "buy" or "sell"
+    side: BrokerSide
     qty: float
-    type: str  # "market" or "limit"
-    price: Optional[float] = None
-    status: str = "new"
+    order_type: BrokerOrderType
+    time_in_force: BrokerTimeInForce
+    limit_price: Optional[float] = None
+    status: str
+    filled_qty: float = 0.0
+    avg_fill_price: Optional[float] = None
+    created_at: datetime
 
 
 class BrokerPosition(BaseModel):
     symbol: str
-    side: str  # "long" or "short"
-    size: float
-    entry_price: float
+    qty: float
+    avg_entry_price: float
+    side: BrokerSide
+    unrealized_pnl: Optional[float] = None
 
 
 class BrokerAccountSnapshot(BaseModel):
     equity: float
-    balance: float
-    margin_used: float
+    cash: float
+    buying_power: float
+    daytrade_count: Optional[int] = None
+    last_equity: Optional[float] = None
 
 
-def place_live_order(order: BrokerOrder) -> BrokerOrder:
-    """
-    TODO: implement real exchange call.
-    For now, just echo back with status 'filled'.
-    """
-    order.status = "filled"
-    return order
+class BrokerOrderRequest(BaseModel):
+    """Represents the intent to place a new order with the broker."""
+
+    symbol: str
+    side: BrokerSide
+    qty: float
+    order_type: BrokerOrderType
+    time_in_force: BrokerTimeInForce
+    limit_price: Optional[float] = None
 
 
-def fetch_live_positions() -> List[BrokerPosition]:
-    """
-    TODO: call real exchange positions endpoint.
-    Currently returns an empty list.
-    """
-    return []
+@runtime_checkable
+class BrokerClientProtocol(Protocol):
+    async def place_order(self, order: BrokerOrderRequest) -> BrokerOrder: ...
 
+    async def cancel_order(self, order_id: str) -> None: ...
 
-def fetch_live_account() -> BrokerAccountSnapshot:
-    """
-    TODO: call real exchange account/balance endpoint.
-    Currently returns zeros.
-    """
-    return BrokerAccountSnapshot(
-        equity=0.0,
-        balance=0.0,
-        margin_used=0.0,
-    )
+    async def fetch_order(self, order_id: str) -> BrokerOrder: ...
+
+    async def fetch_open_orders(self) -> list[BrokerOrder]: ...
+
+    async def fetch_positions(self) -> list[BrokerPosition]: ...
+
+    async def fetch_account(self) -> BrokerAccountSnapshot: ...
