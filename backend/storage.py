@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 DB_PATH = str(Path(__file__).with_name("paper_trading.db"))
 
@@ -12,6 +13,7 @@ DB_PATH = str(Path(__file__).with_name("paper_trading.db"))
 def get_connection() -> sqlite3.Connection:
     """Return a shared SQLite connection bound to the backend DB file."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     return conn
 
 
@@ -39,6 +41,30 @@ _conn.executescript(
     );
     """
 )
+
+
+_PAPER_TRADE_EXTRA_COLUMNS = {
+    "strategy_name": "TEXT",
+    "alpha_score": "REAL",
+    "entry_signal_time": "DATETIME",
+    "holding_minutes": "REAL",
+    "tags": "TEXT",
+}
+
+
+def _ensure_paper_trade_columns() -> None:
+    """Add newly required columns to paper_trades if missing (simple migration)."""
+    cur = _conn.execute("PRAGMA table_info(paper_trades);")
+    existing = {row[1] for row in cur.fetchall()}
+    for column, column_type in _PAPER_TRADE_EXTRA_COLUMNS.items():
+        if column not in existing:
+            _conn.execute(
+                f"ALTER TABLE paper_trades ADD COLUMN {column} {column_type};"
+            )
+    _conn.commit()
+
+
+_ensure_paper_trade_columns()
 _conn.commit()
 
 
@@ -49,11 +75,54 @@ def record_paper_trade(
     entry_price: float,
     exit_price: float,
     pnl: float,
+    *,
+    strategy_name: Optional[str] = None,
+    alpha_score: Optional[float] = None,
+    entry_signal_time: Optional[Any] = None,
+    holding_minutes: Optional[float] = None,
+    tags: Optional[Any] = None,
 ) -> None:
     """Persist a realized paper trade."""
+    serialized_tags: Optional[str]
+    if tags is None:
+        serialized_tags = None
+    elif isinstance(tags, str):
+        serialized_tags = tags
+    else:
+        try:
+            serialized_tags = json.dumps(tags)
+        except (TypeError, ValueError):
+            serialized_tags = None
+
     _conn.execute(
-        "INSERT INTO paper_trades (symbol, side, qty, entry_price, exit_price, pnl) VALUES (?, ?, ?, ?, ?, ?)",
-        (symbol, side, qty, entry_price, exit_price, pnl),
+        """
+        INSERT INTO paper_trades (
+            symbol,
+            side,
+            qty,
+            entry_price,
+            exit_price,
+            pnl,
+            strategy_name,
+            alpha_score,
+            entry_signal_time,
+            holding_minutes,
+            tags
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            symbol,
+            side,
+            qty,
+            entry_price,
+            exit_price,
+            pnl,
+            strategy_name,
+            alpha_score,
+            entry_signal_time,
+            holding_minutes,
+            serialized_tags,
+        ),
     )
     _conn.commit()
 
@@ -70,7 +139,24 @@ def record_equity_snapshot(equity: float, daily_pnl: float) -> None:
 def fetch_recent_trades(limit: int = 100) -> Iterable[Tuple]:
     """Return most recent paper trades (latest first)."""
     cur = _conn.execute(
-        "SELECT ts, symbol, side, qty, entry_price, exit_price, pnl FROM paper_trades ORDER BY id DESC LIMIT ?",
+        """
+        SELECT
+            ts,
+            symbol,
+            side,
+            qty,
+            entry_price,
+            exit_price,
+            pnl,
+            strategy_name,
+            alpha_score,
+            entry_signal_time,
+            holding_minutes,
+            tags
+        FROM paper_trades
+        ORDER BY id DESC
+        LIMIT ?
+        """,
         (limit,),
     )
     return cur.fetchall()

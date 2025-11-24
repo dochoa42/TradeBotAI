@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 try:
     from .indicators import IndicatorSpec
@@ -228,6 +228,11 @@ class PaperTradeRecord(BaseModel):
     entry_price: float
     exit_price: float
     pnl: float
+    strategy_name: Optional[str] = None
+    alpha_score: Optional[float] = None
+    entry_signal_time: datetime | int | None = None
+    holding_minutes: Optional[float] = None
+    tags: Optional[Dict[str, Any]] = None
 
 
 class EquitySnapshot(BaseModel):

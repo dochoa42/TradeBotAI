@@ -5,8 +5,9 @@ Purely in-memory paper trading state that resets whenever the backend restarts.
 
 from __future__ import annotations
 
+import json
 from datetime import date
-from typing import Dict, Optional, List
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter
@@ -115,6 +116,21 @@ async def get_paper_status() -> LiveStatus:
     return _status()
 
 
+def _deserialize_tags(raw: Any) -> Optional[Dict[str, Any]]:
+    """Convert the stored JSON string (if any) into a dict for the API response."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw  # already parsed
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 @router.post("/paper/place_order", response_model=LiveStatus)
 async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     global _paper_equity
@@ -216,13 +232,18 @@ async def get_paper_trades(limit: int = 100) -> List[PaperTradeRecord]:
     rows = list(fetch_recent_trades(limit=limit))
     return [
         PaperTradeRecord(
-            ts=row[0],
-            symbol=row[1],
-            side=row[2],
-            qty=row[3],
-            entry_price=row[4],
-            exit_price=row[5],
-            pnl=row[6],
+            ts=row["ts"],
+            symbol=row["symbol"],
+            side=row["side"],
+            qty=row["qty"],
+            entry_price=row["entry_price"],
+            exit_price=row["exit_price"],
+            pnl=row["pnl"],
+            strategy_name=row["strategy_name"],
+            alpha_score=row["alpha_score"],
+            entry_signal_time=row["entry_signal_time"],
+            holding_minutes=row["holding_minutes"],
+            tags=_deserialize_tags(row["tags"]),
         )
         for row in rows
     ]
