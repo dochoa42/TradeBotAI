@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple
 
@@ -168,4 +169,74 @@ def fetch_equity_history(limit: int = 200) -> Iterable[Tuple]:
         "SELECT ts, equity, daily_pnl FROM paper_equity ORDER BY id DESC LIMIT ?",
         (limit,),
     )
+    return cur.fetchall()
+
+
+def _normalize_epoch(ts: Optional[int]) -> Optional[str]:
+    """Convert incoming unix timestamps (ms or s) into the DB format."""
+    if ts is None:
+        return None
+    value = float(ts)
+    if value > 1_000_000_000_000:  # assume milliseconds
+        value /= 1000.0
+    try:
+        dt = datetime.utcfromtimestamp(value)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def fetch_paper_trades_filtered(
+    *,
+    symbol: Optional[str] = None,
+    strategy: Optional[str] = None,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
+) -> Iterable[sqlite3.Row]:
+    """Return paper trades ordered by time with lightweight filtering."""
+
+    symbol_filter = symbol.upper() if symbol else None
+    start_filter = _normalize_epoch(start_ts)
+    end_filter = _normalize_epoch(end_ts)
+
+    query = [
+        """
+        SELECT
+            ts,
+            symbol,
+            side,
+            qty,
+            entry_price,
+            exit_price,
+            pnl,
+            strategy_name,
+            alpha_score,
+            entry_signal_time,
+            holding_minutes,
+            tags
+        FROM paper_trades
+        """
+    ]
+    clauses = []
+    params: list[Any] = []
+
+    if symbol_filter:
+        clauses.append("symbol = ?")
+        params.append(symbol_filter)
+    if strategy:
+        clauses.append("strategy_name = ?")
+        params.append(strategy)
+    if start_filter:
+        clauses.append("ts >= ?")
+        params.append(start_filter)
+    if end_filter:
+        clauses.append("ts <= ?")
+        params.append(end_filter)
+
+    if clauses:
+        query.append("WHERE " + " AND ".join(clauses))
+
+    query.append("ORDER BY ts ASC")
+
+    cur = _conn.execute(" ".join(query), tuple(params))
     return cur.fetchall()

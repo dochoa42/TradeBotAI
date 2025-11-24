@@ -4,6 +4,7 @@ import {
   PlacePaperOrderRequest,
   PaperTradeRecord,
   EquitySnapshot,
+  PaperPerformanceSummary,
 } from "../types/trading";
 import {
   fetchPaperStatus,
@@ -13,6 +14,7 @@ import {
   flattenPaperPosition,
   fetchPaperTrades,
   fetchEquityHistory,
+  fetchPaperSummary,
 } from "../api/liveTrading";
 import {
   ResponsiveContainer,
@@ -24,11 +26,20 @@ import {
   CartesianGrid,
 } from "recharts";
 
+const POLL_INTERVAL = 10000;
+
 const formatNumber = (value: number | null | undefined, digits = 2): string => {
   if (!Number.isFinite(value ?? NaN)) {
     return "-";
   }
   return (value ?? 0).toFixed(digits);
+};
+
+const formatPercent = (value: number | null | undefined, digits = 1): string => {
+  if (!Number.isFinite(value ?? NaN)) {
+    return "-";
+  }
+  return `${((value ?? 0) * 100).toFixed(digits)}%`;
 };
 
 const formatPnlClass = (value: number | null | undefined): string => {
@@ -53,6 +64,9 @@ export const LiveTradingPanel: React.FC = () => {
   const [killSwitchBusy, setKillSwitchBusy] = useState(false);
   const [tradeHistory, setTradeHistory] = useState<PaperTradeRecord[]>([]);
   const [equityHistory, setEquityHistory] = useState<EquitySnapshot[]>([]);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("ALL");
+  const [selectedStrategy, setSelectedStrategy] = useState<string>("ALL");
+  const [summary, setSummary] = useState<PaperPerformanceSummary | null>(null);
 
   const equityChartData = useMemo(
     () =>
@@ -65,6 +79,43 @@ export const LiveTradingPanel: React.FC = () => {
           equity: pt.equity,
         })),
     [equityHistory]
+  );
+
+  const symbolOptions = useMemo(() => {
+    const universe = new Set<string>();
+    status?.positions?.forEach((pos) => universe.add(pos.symbol));
+    tradeHistory.forEach((trade) => universe.add(trade.symbol));
+    if (selectedSymbol !== "ALL") {
+      universe.add(selectedSymbol);
+    }
+    const sorted = Array.from(universe).sort();
+    return ["ALL", ...sorted.filter((sym) => sym !== "ALL")];
+  }, [status, tradeHistory, selectedSymbol]);
+
+  const strategyOptions = useMemo(() => {
+    const strategies = new Set<string>();
+    tradeHistory.forEach((trade) => {
+      if (trade.strategy_name) {
+        strategies.add(trade.strategy_name);
+      }
+    });
+    if (selectedStrategy !== "ALL") {
+      strategies.add(selectedStrategy);
+    }
+    const sorted = Array.from(strategies).sort();
+    return ["ALL", ...sorted];
+  }, [tradeHistory, selectedStrategy]);
+
+  const filteredTrades = useMemo(
+    () =>
+      tradeHistory.filter((trade) => {
+        const matchesSymbol =
+          selectedSymbol === "ALL" || trade.symbol === selectedSymbol;
+        const matchesStrategy =
+          selectedStrategy === "ALL" || trade.strategy_name === selectedStrategy;
+        return matchesSymbol && matchesStrategy;
+      }),
+    [tradeHistory, selectedSymbol, selectedStrategy]
   );
 
   useEffect(() => {
@@ -91,12 +142,39 @@ export const LiveTradingPanel: React.FC = () => {
     }
 
     loadAll();
-    const id = window.setInterval(loadAll, 10000);
+    const id = window.setInterval(loadAll, POLL_INTERVAL);
     return () => {
       active = false;
       window.clearInterval(id);
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadSummary() {
+      try {
+        const data = await fetchPaperSummary({
+          symbol: selectedSymbol === "ALL" ? undefined : selectedSymbol,
+          strategy: selectedStrategy === "ALL" ? undefined : selectedStrategy,
+        });
+        if (active) {
+          setSummary(data);
+        }
+      } catch (err) {
+        if (active) {
+          setSummary(null);
+        }
+      }
+    }
+
+    loadSummary();
+    const id = window.setInterval(loadSummary, POLL_INTERVAL);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [selectedSymbol, selectedStrategy]);
 
   useEffect(() => {
     if (orderType === "market") {
@@ -194,6 +272,19 @@ export const LiveTradingPanel: React.FC = () => {
     }
   }
 
+  const netPnlDisplay = summary ? formatNumber(summary.net_pnl) : "-";
+  const netPnlClass = summary ? formatPnlClass(summary.net_pnl) : "text-slate-200";
+  const winRateDisplay = summary ? formatPercent(summary.win_rate) : "-";
+  const winRateClass = summary
+    ? summary.win_rate >= 0.5
+      ? "text-emerald-400"
+      : "text-rose-400"
+    : "text-slate-200";
+  const drawdownDisplay = summary ? formatNumber(summary.max_drawdown) : "-";
+  const drawdownClass =
+    summary && summary.max_drawdown > 0 ? "text-rose-400" : "text-slate-200";
+  const totalTradesDisplay = summary ? summary.total_trades.toString() : "-";
+
   if (!status && !loading) {
     return (
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 text-sm text-slate-300">
@@ -262,6 +353,33 @@ export const LiveTradingPanel: React.FC = () => {
             </button>
           </div>
         )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Net PnL
+          </p>
+          <p className={`mt-2 text-2xl font-semibold ${netPnlClass}`}>{netPnlDisplay}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Win Rate
+          </p>
+          <p className={`mt-2 text-2xl font-semibold ${winRateClass}`}>{winRateDisplay}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Max Drawdown
+          </p>
+          <p className={`mt-2 text-2xl font-semibold ${drawdownClass}`}>{drawdownDisplay}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Total Trades
+          </p>
+          <p className="mt-2 text-2xl font-semibold text-slate-100">{totalTradesDisplay}</p>
+        </div>
       </div>
 
       {status && (
@@ -415,6 +533,42 @@ export const LiveTradingPanel: React.FC = () => {
             </div>
           </div>
 
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap gap-4 items-end">
+            <label className="flex flex-col text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <span className="mb-1">Symbol Filter</span>
+              <select
+                value={selectedSymbol}
+                onChange={(e) => setSelectedSymbol(e.target.value)}
+                className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm font-normal text-slate-50"
+              >
+                {symbolOptions.map((sym) => (
+                  <option key={sym} value={sym}>
+                    {sym === "ALL" ? "All" : sym}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <span className="mb-1">Strategy Filter</span>
+              <select
+                value={selectedStrategy}
+                onChange={(e) => setSelectedStrategy(e.target.value)}
+                className="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm font-normal text-slate-50"
+              >
+                {strategyOptions.map((strategy) => (
+                  <option key={strategy} value={strategy}>
+                    {strategy === "ALL" ? "All" : strategy}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="text-xs text-slate-500">
+              {summary
+                ? `Matched ${summary.total_trades} trades`
+                : "No matching trades yet"}
+            </div>
+          </div>
+
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-slate-100">Open Positions</h3>
@@ -549,11 +703,17 @@ export const LiveTradingPanel: React.FC = () => {
             <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-300">
               <span>Trade History (Paper)</span>
               <span className="text-[11px] text-slate-500">
-                Showing last {tradeHistory.length} trades
+                {filteredTrades.length === tradeHistory.length
+                  ? `Showing ${filteredTrades.length} trades`
+                  : `Showing ${filteredTrades.length} / ${tradeHistory.length} trades`}
               </span>
             </div>
             {tradeHistory.length === 0 ? (
               <div className="text-xs text-slate-500">No paper trades recorded yet.</div>
+            ) : filteredTrades.length === 0 ? (
+              <div className="text-xs text-slate-500">
+                No trades match the current filters.
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-xs">
@@ -569,7 +729,7 @@ export const LiveTradingPanel: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {tradeHistory.map((t) => {
+                    {filteredTrades.map((t, idx) => {
                       const pnlClass =
                         t.pnl > 0
                           ? "text-emerald-400"
@@ -578,7 +738,7 @@ export const LiveTradingPanel: React.FC = () => {
                           : "text-slate-100";
                       return (
                         <tr
-                          key={`${t.ts}-${t.symbol}-${t.side}`}
+                          key={`${t.ts}-${t.symbol}-${idx}`}
                           className="border-b border-slate-800/60 last:border-0"
                         >
                           <td className="px-4 py-2 text-slate-400">

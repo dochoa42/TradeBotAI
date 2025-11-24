@@ -240,3 +240,17 @@ class EquitySnapshot(BaseModel):
     equity: float
     daily_pnl: float
 
+
+class PaperPerformanceSummary(BaseModel):
+    total_trades: int
+    win_trades: int
+    loss_trades: int
+    win_rate: float
+    gross_pnl: float
+    net_pnl: float
+    max_drawdown: float
+    avg_r_multiple: Optional[float] = None
+    best_trade_pnl: Optional[float] = None
+    worst_trade_pnl: Optional[float] = None
+    avg_holding_minutes: Optional[float] = None
+

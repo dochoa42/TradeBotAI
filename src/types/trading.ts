@@ -111,10 +111,29 @@ export interface PaperTradeRecord {
   entry_price: number;
   exit_price: number;
   pnl: number;
+  strategy_name?: string | null;
+  alpha_score?: number | null;
+  entry_signal_time?: string | number | null;
+  holding_minutes?: number | null;
+  tags?: Record<string, unknown> | null;
 }
 
 export interface EquitySnapshot {
   ts: string; // ISO timestamp from backend
   equity: number;
   daily_pnl: number;
+}
+
+export interface PaperPerformanceSummary {
+  total_trades: number;
+  win_trades: number;
+  loss_trades: number;
+  win_rate: number;
+  gross_pnl: number;
+  net_pnl: number;
+  max_drawdown: number;
+  avg_r_multiple: number | null;
+  best_trade_pnl: number | null;
+  worst_trade_pnl: number | null;
+  avg_holding_minutes: number | null;
 }

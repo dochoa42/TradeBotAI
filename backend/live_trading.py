@@ -23,6 +23,7 @@ from models import (
     FlattenPaperPositionRequest,
     PaperTradeRecord,
     EquitySnapshot,
+    PaperPerformanceSummary,
 )
 from risk import (
     RISK_CONFIG,
@@ -37,6 +38,7 @@ from storage import (
     record_equity_snapshot,
     fetch_recent_trades,
     fetch_equity_history,
+    fetch_paper_trades_filtered,
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -49,6 +51,21 @@ _paper_start_of_day_equity: float = _paper_equity
 _paper_positions: Dict[str, LivePosition] = {}
 _paper_orders: Dict[str, LiveOrder] = {}
 _current_day: date = date.today()
+
+
+def _max_drawdown_absolute(values: List[float]) -> float:
+    """Return max drawdown in absolute currency terms."""
+    if not values:
+        return 0.0
+    peak = values[0]
+    max_dd = 0.0
+    for value in values:
+        if value > peak:
+            peak = value
+        drawdown = peak - value
+        if drawdown > max_dd:
+            max_dd = drawdown
+    return float(max_dd)
 
 
 def _ensure_daily_reset() -> None:
@@ -263,3 +280,89 @@ async def get_paper_equity_history(limit: int = 200) -> List[EquitySnapshot]:
         )
         for row in rows
     ]
+
+
+def _summarize_trades(
+    trades: List[dict],
+) -> PaperPerformanceSummary:
+    total = len(trades)
+    pnl_values = [float(row["pnl"]) for row in trades]
+    win_trades = sum(1 for pnl in pnl_values if pnl > 0)
+    loss_trades = sum(1 for pnl in pnl_values if pnl < 0)
+    gross_pnl = float(sum(pnl_values))
+    net_pnl = gross_pnl
+    win_rate = (win_trades / total) if total > 0 else 0.0
+    best_trade_pnl = max(pnl_values) if pnl_values else None
+    worst_trade_pnl = min(pnl_values) if pnl_values else None
+
+    holding_samples = [float(row["holding_minutes"]) for row in trades if row["holding_minutes"] is not None]
+    avg_holding = (
+        float(sum(holding_samples) / len(holding_samples))
+        if holding_samples
+        else None
+    )
+
+    equity_curve: List[float] = []
+    running = 0.0
+    for pnl in pnl_values:
+        running += pnl
+        equity_curve.append(running)
+    max_drawdown = _max_drawdown_absolute(equity_curve)
+
+    avg_r_multiple: Optional[float] = None
+    if total > 0 and loss_trades > 0:
+        avg_pnl = gross_pnl / total
+        avg_loss = abs(sum(pnl for pnl in pnl_values if pnl < 0) / loss_trades)
+        if avg_loss > 0:
+            avg_r_multiple = avg_pnl / avg_loss
+
+    return PaperPerformanceSummary(
+        total_trades=total,
+        win_trades=win_trades,
+        loss_trades=loss_trades,
+        win_rate=float(win_rate),
+        gross_pnl=float(gross_pnl),
+        net_pnl=float(net_pnl),
+        max_drawdown=float(max_drawdown),
+        avg_r_multiple=avg_r_multiple,
+        best_trade_pnl=float(best_trade_pnl) if best_trade_pnl is not None else None,
+        worst_trade_pnl=float(worst_trade_pnl) if worst_trade_pnl is not None else None,
+        avg_holding_minutes=avg_holding,
+    )
+
+
+@router.get("/paper/summary", response_model=PaperPerformanceSummary)
+async def get_paper_performance_summary(
+    symbol: Optional[str] = None,
+    strategy: Optional[str] = None,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
+) -> PaperPerformanceSummary:
+    """Aggregate light-weight performance stats for the UI cards."""
+
+    rows = [
+        dict(row)
+        for row in fetch_paper_trades_filtered(
+            symbol=symbol,
+            strategy=strategy,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+    ]
+
+    if not rows:
+        return PaperPerformanceSummary(
+            total_trades=0,
+            win_trades=0,
+            loss_trades=0,
+            win_rate=0.0,
+            gross_pnl=0.0,
+            net_pnl=0.0,
+            max_drawdown=0.0,
+            avg_r_multiple=None,
+            best_trade_pnl=None,
+            worst_trade_pnl=None,
+            avg_holding_minutes=None,
+        )
+
+    return _summarize_trades(rows)

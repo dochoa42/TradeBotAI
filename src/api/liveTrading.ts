@@ -3,6 +3,7 @@ import {
   PlacePaperOrderRequest,
   PaperTradeRecord,
   EquitySnapshot,
+  PaperPerformanceSummary,
 } from "../types/trading";
 
 type KillSwitchState = {
@@ -101,6 +102,36 @@ export async function fetchEquityHistory(
   const res = await fetch(`/api/live/paper/equity-history?limit=${limit}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch equity history: ${res.status}`);
+  }
+  return res.json();
+}
+
+export type PaperSummaryFilters = {
+  symbol?: string;
+  strategy?: string;
+  start_ts?: number;
+  end_ts?: number;
+};
+
+export async function fetchPaperSummary(
+  filters: PaperSummaryFilters = {}
+): Promise<PaperPerformanceSummary> {
+  const params = new URLSearchParams();
+  (Object.entries(filters) as [
+    keyof PaperSummaryFilters,
+    string | number | undefined
+  ][])
+    .forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") {
+        return;
+      }
+      params.set(key, String(value));
+    });
+  const qs = params.toString();
+  const url = `${BASE_URL}/paper/summary${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch paper summary: ${res.status}`);
   }
   return res.json();
 }
