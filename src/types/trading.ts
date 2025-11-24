@@ -97,6 +97,10 @@ export interface PlacePaperOrderRequest {
   qty: number;
   type?: "market" | "limit";
   price?: number;
+  strategy_name?: string;
+  alpha_score?: number;
+  tags?: Record<string, any>;
+  entry_signal_time?: number;
 }
 
 // ============================

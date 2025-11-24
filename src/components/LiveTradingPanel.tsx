@@ -61,6 +61,8 @@ export const LiveTradingPanel: React.FC = () => {
   const [qty, setQty] = useState(0.01);
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [price, setPrice] = useState<number | undefined>(undefined);
+  const [strategyName, setStrategyName] = useState("");
+  const [alphaScore, setAlphaScore] = useState<number | null>(null);
   const [killSwitchBusy, setKillSwitchBusy] = useState(false);
   const [tradeHistory, setTradeHistory] = useState<PaperTradeRecord[]>([]);
   const [equityHistory, setEquityHistory] = useState<EquitySnapshot[]>([]);
@@ -201,12 +203,20 @@ export const LiveTradingPanel: React.FC = () => {
       setLoading(true);
       setError(null);
 
+      const trimmedStrategy = strategyName.trim();
+      const resolvedAlpha =
+        typeof alphaScore === "number" && Number.isFinite(alphaScore)
+          ? alphaScore
+          : undefined;
       const body: PlacePaperOrderRequest = {
         symbol,
         side,
         qty,
         type: orderType,
         ...(orderType === "limit" && price ? { price } : {}),
+        strategy_name: trimmedStrategy ? trimmedStrategy : undefined,
+        alpha_score: resolvedAlpha,
+        entry_signal_time: Math.floor(Date.now() / 1000),
       };
 
       const updated = await placePaperOrder(body);
@@ -452,6 +462,35 @@ export const LiveTradingPanel: React.FC = () => {
                     }}
                     disabled={orderType !== "limit"}
                     className="mt-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-50 focus:border-emerald-400 focus:outline-none disabled:opacity-40"
+                  />
+                </label>
+                <label className="flex flex-col text-sm text-slate-200">
+                  Strategy
+                  <input
+                    type="text"
+                    value={strategyName}
+                    onChange={(e) => setStrategyName(e.target.value)}
+                    placeholder="e.g. Mean Revert"
+                    className="mt-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-50 focus:border-emerald-400 focus:outline-none"
+                  />
+                </label>
+                <label className="flex flex-col text-sm text-slate-200">
+                  Alpha Score
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={alphaScore ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === "") {
+                        setAlphaScore(null);
+                        return;
+                      }
+                      const parsed = Number(next);
+                      setAlphaScore(Number.isFinite(parsed) ? parsed : null);
+                    }}
+                    placeholder="0.00"
+                    className="mt-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-50 focus:border-emerald-400 focus:outline-none"
                   />
                 </label>
               </div>
@@ -721,6 +760,8 @@ export const LiveTradingPanel: React.FC = () => {
                     <tr>
                       <th className="px-4 py-2">Time</th>
                       <th className="px-4 py-2">Symbol</th>
+                      <th className="px-4 py-2">Strategy</th>
+                      <th className="px-4 py-2 text-right">Alpha</th>
                       <th className="px-4 py-2">Side</th>
                       <th className="px-4 py-2 text-right">Qty</th>
                       <th className="px-4 py-2 text-right">Entry</th>
@@ -745,6 +786,10 @@ export const LiveTradingPanel: React.FC = () => {
                             {new Date(t.ts).toLocaleString()}
                           </td>
                           <td className="px-4 py-2">{t.symbol}</td>
+                          <td className="px-4 py-2">{t.strategy_name ?? "-"}</td>
+                          <td className="px-4 py-2 text-right">
+                            {t.alpha_score != null ? t.alpha_score.toFixed(2) : "-"}
+                          </td>
                           <td className="px-4 py-2">{t.side}</td>
                           <td className="px-4 py-2 text-right">{t.qty.toFixed(4)}</td>
                           <td className="px-4 py-2 text-right">{t.entry_price.toFixed(2)}</td>

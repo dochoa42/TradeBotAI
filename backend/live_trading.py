@@ -116,6 +116,25 @@ def _flatten_position(req: FlattenPaperPositionRequest) -> None:
     if not pos or pos.size <= 0:
         return
 
+    now_ts = time.time()
+    position_entry_ts = getattr(pos, "entry_signal_time", None)
+    normalized_entry_ts: Optional[float] = None
+    if position_entry_ts is not None:
+        try:
+            normalized_entry_ts = float(position_entry_ts)
+        except (TypeError, ValueError):
+            normalized_entry_ts = None
+        else:
+            # Older positions may keep ms timestamps; normalize to seconds before diffing.
+            if normalized_entry_ts > 1_000_000_000_000:
+                normalized_entry_ts /= 1000.0
+
+    holding_minutes = (
+        (now_ts - normalized_entry_ts) / 60.0
+        if normalized_entry_ts is not None
+        else None
+    )
+
     if req.side == "long":
         pnl = (req.exit_price - pos.entry_price) * pos.size
     else:
@@ -129,10 +148,11 @@ def _flatten_position(req: FlattenPaperPositionRequest) -> None:
         entry_price=pos.entry_price,
         exit_price=req.exit_price,
         pnl=pnl,
-        strategy_name=pos.strategy_name,
-        alpha_score=pos.alpha_score,
-        entry_signal_time=pos.entry_signal_time,
-        tags=pos.tags,
+        strategy_name=getattr(pos, "strategy_name", None),
+        alpha_score=getattr(pos, "alpha_score", None),
+        entry_signal_time=position_entry_ts,
+        holding_minutes=holding_minutes,
+        tags=getattr(pos, "tags", None),
     )
     del _paper_positions[pos_key]
 
