@@ -176,6 +176,10 @@ class LivePosition(BaseModel):
     entry_price: float
     current_price: float
     unrealized_pnl: float
+    strategy_name: Optional[str] = None
+    alpha_score: Optional[float] = None
+    tags: Optional[Dict[str, Any]] = None
+    entry_signal_time: Optional[int] = None
 
 
 class LiveOrder(BaseModel):
@@ -186,6 +190,10 @@ class LiveOrder(BaseModel):
     type: Literal["market", "limit"]
     price: Optional[float] = None
     status: Literal["new", "filled", "canceled"]
+    strategy_name: Optional[str] = None
+    alpha_score: Optional[float] = None
+    tags: Optional[Dict[str, Any]] = None
+    entry_signal_time: Optional[int] = None
 
 
 class LiveStatus(BaseModel):
@@ -208,6 +216,10 @@ class PlacePaperOrderRequest(BaseModel):
     qty: float
     type: Literal["market", "limit"] = "market"
     price: Optional[float] = None
+    strategy_name: Optional[str] = None
+    alpha_score: Optional[float] = None
+    tags: Optional[Dict[str, Any]] = None
+    entry_signal_time: Optional[int] = None
 
 
 class CancelPaperOrderRequest(BaseModel):

@@ -6,6 +6,7 @@ Purely in-memory paper trading state that resets whenever the backend restarts.
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -51,6 +52,11 @@ _paper_start_of_day_equity: float = _paper_equity
 _paper_positions: Dict[str, LivePosition] = {}
 _paper_orders: Dict[str, LiveOrder] = {}
 _current_day: date = date.today()
+
+
+def _current_unix_ms() -> int:
+    """Return current Unix timestamp in milliseconds."""
+    return int(time.time() * 1000)
 
 
 def _max_drawdown_absolute(values: List[float]) -> float:
@@ -123,6 +129,10 @@ def _flatten_position(req: FlattenPaperPositionRequest) -> None:
         entry_price=pos.entry_price,
         exit_price=req.exit_price,
         pnl=pnl,
+        strategy_name=pos.strategy_name,
+        alpha_score=pos.alpha_score,
+        entry_signal_time=pos.entry_signal_time,
+        tags=pos.tags,
     )
     del _paper_positions[pos_key]
 
@@ -159,6 +169,9 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
         return _status()
 
     price = req.price if req.price is not None else 0.0
+    resolved_entry_signal_time = (
+        req.entry_signal_time if req.entry_signal_time is not None else _current_unix_ms()
+    )
     order_id = str(uuid4())
     pos_side = "long" if req.side == "buy" else "short"
     order = LiveOrder(
@@ -169,6 +182,10 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
         type=req.type,
         price=price,
         status="filled",
+        strategy_name=req.strategy_name,
+        alpha_score=req.alpha_score,
+        tags=req.tags,
+        entry_signal_time=resolved_entry_signal_time,
     )
     _paper_orders[order_id] = order
 
@@ -182,6 +199,14 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
             ) / total_qty
         else:
             weighted_price = existing.entry_price
+        strategy_name = existing.strategy_name
+        entry_signal_time = existing.entry_signal_time
+        alpha_score = (
+            req.alpha_score
+            if req.alpha_score is not None
+            else existing.alpha_score
+        )
+        tags = req.tags if req.tags is not None else existing.tags
         _paper_positions[pos_key] = LivePosition(
             symbol=req.symbol,
             side=pos_side,
@@ -189,6 +214,10 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
             entry_price=weighted_price,
             current_price=weighted_price,
             unrealized_pnl=0.0,
+            strategy_name=strategy_name,
+            alpha_score=alpha_score,
+            tags=tags,
+            entry_signal_time=entry_signal_time,
         )
     else:
         _paper_positions[pos_key] = LivePosition(
@@ -198,6 +227,10 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
             entry_price=price,
             current_price=price,
             unrealized_pnl=0.0,
+            strategy_name=req.strategy_name,
+            alpha_score=req.alpha_score,
+            tags=req.tags,
+            entry_signal_time=resolved_entry_signal_time,
         )
 
     return _status()
