@@ -14,6 +14,7 @@ from uuid import uuid4
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from broker_client import STUB_BROKER_CLIENT
 from models import (
     LiveOrder,
     LivePosition,
@@ -43,6 +44,9 @@ from storage import (
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
+
+# Keep a reference handy for upcoming live-mode wiring without altering paper behavior yet.
+_ = STUB_BROKER_CLIENT
 
 # Phase 10.6: UI "Live Trading" tab uses paper mode only.
 # Actual live trading will be wired later and gated by risk.LIVE_TRADING_ENABLED.
@@ -188,6 +192,9 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     if not decision.allowed:
         return _status()
 
+    # TODO: When CURRENT_MODE switches to "live", route through STUB_BROKER_CLIENT.place_order
+    # (and later a real broker implementation) instead of the in-memory engine below.
+
     price = req.price if req.price is not None else 0.0
     resolved_entry_signal_time = (
         req.entry_signal_time if req.entry_signal_time is not None else _current_unix_ms()
@@ -261,6 +268,7 @@ async def cancel_paper_order(req: CancelPaperOrderRequest) -> LiveStatus:
     order = _paper_orders.get(req.order_id)
     if order and order.status == "new":
         _paper_orders[req.order_id] = LiveOrder(**{**order.dict(), "status": "canceled"})
+    # TODO: Mirror cancellations to STUB_BROKER_CLIENT once live trading mode is enabled.
     return _status()
 
 
@@ -290,6 +298,7 @@ async def get_paper_risk_config() -> RiskConfig:
 @router.post("/paper/flatten", response_model=LiveStatus)
 async def flatten_paper_position(req: FlattenPaperPositionRequest) -> LiveStatus:
     """Flatten a paper position at a provided exit price."""
+    # TODO: When live trading is active, issue closing orders through STUB_BROKER_CLIENT.
     _flatten_position(req)
     return _status()
 
