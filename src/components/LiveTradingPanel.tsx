@@ -6,6 +6,7 @@ import {
   EquitySnapshot,
   PaperPerformanceSummary,
   ExecutionMode,
+  StrategyPerformanceRow,
 } from "../types/trading";
 import {
   fetchPaperStatus,
@@ -17,6 +18,7 @@ import {
   fetchEquityHistory,
   fetchPaperSummary,
   fetchExecutionMode,
+  fetchStrategyPerformance,
 } from "../api/liveTrading";
 import {
   ResponsiveContainer,
@@ -72,6 +74,8 @@ export const LiveTradingPanel: React.FC = () => {
   const [selectedStrategy, setSelectedStrategy] = useState<string>("ALL");
   const [summary, setSummary] = useState<PaperPerformanceSummary | null>(null);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("paper");
+  const [strategyPerf, setStrategyPerf] = useState<StrategyPerformanceRow[]>([]);
+  const [strategyPerfLoading, setStrategyPerfLoading] = useState(false);
 
   const equityChartData = useMemo(
     () =>
@@ -182,8 +186,35 @@ export const LiveTradingPanel: React.FC = () => {
       }
     }
 
-    loadSummary();
-    const id = window.setInterval(loadSummary, POLL_INTERVAL);
+    async function loadStrategyPerformanceRows() {
+      if (active) {
+        setStrategyPerfLoading(true);
+      }
+      try {
+        const rows = await fetchStrategyPerformance(
+          selectedSymbol === "ALL" ? undefined : selectedSymbol
+        );
+        if (active) {
+          setStrategyPerf(rows);
+        }
+      } catch (err) {
+        if (active) {
+          setStrategyPerf([]);
+        }
+      } finally {
+        if (active) {
+          setStrategyPerfLoading(false);
+        }
+      }
+    }
+
+    async function loadMetrics() {
+      await loadSummary();
+      await loadStrategyPerformanceRows();
+    }
+
+    loadMetrics();
+    const id = window.setInterval(loadMetrics, POLL_INTERVAL);
     return () => {
       active = false;
       window.clearInterval(id);
@@ -817,6 +848,62 @@ export const LiveTradingPanel: React.FC = () => {
                           <td className="px-4 py-2 text-right">{t.exit_price.toFixed(2)}</td>
                           <td className={`px-4 py-2 text-right ${pnlClass}`}>
                             {t.pnl.toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+            <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-300">
+              <span>Strategy Performance (Paper)</span>
+              <span className="text-[11px] text-slate-500">
+                {strategyPerf.length} {strategyPerf.length === 1 ? "strategy" : "strategies"}
+              </span>
+            </div>
+            {strategyPerfLoading ? (
+              <div className="text-xs text-slate-500">Loading...</div>
+            ) : strategyPerf.length === 0 ? (
+              <div className="text-xs text-slate-500">No strategies with trades yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="border-b border-slate-700 text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Strategy</th>
+                      <th className="px-4 py-2">Symbol</th>
+                      <th className="px-4 py-2 text-right">Trades</th>
+                      <th className="px-4 py-2 text-right">Win %</th>
+                      <th className="px-4 py-2 text-right">Net PnL</th>
+                      <th className="px-4 py-2 text-right">Max DD</th>
+                      <th className="px-4 py-2 text-right">Avg PnL / trade</th>
+                      <th className="px-4 py-2 text-right">Avg hold (min)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {strategyPerf.map((row) => {
+                      const drawdownValue = row.max_drawdown > 0 ? -row.max_drawdown : row.max_drawdown;
+                      return (
+                        <tr key={`${row.strategy_name}-${row.symbol}`} className="border-b border-slate-800/60 last:border-0">
+                          <td className="px-4 py-2">{row.strategy_name}</td>
+                          <td className="px-4 py-2">{row.symbol}</td>
+                          <td className="px-4 py-2 text-right">{row.total_trades}</td>
+                          <td className="px-4 py-2 text-right">{formatPercent(row.win_rate, 1)}</td>
+                          <td className={`px-4 py-2 text-right font-semibold ${formatPnlClass(row.net_pnl)}`}>
+                            {row.net_pnl.toFixed(2)}
+                          </td>
+                          <td className={`px-4 py-2 text-right font-semibold ${formatPnlClass(drawdownValue)}`}>
+                            {drawdownValue.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-2 text-right">{formatNumber(row.avg_trade_pnl)}</td>
+                          <td className="px-4 py-2 text-right">
+                            {row.avg_holding_minutes != null
+                              ? formatNumber(row.avg_holding_minutes, 1)
+                              : "-"}
                           </td>
                         </tr>
                       );

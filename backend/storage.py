@@ -6,7 +6,9 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from models import StrategyPerformanceRow
 
 DB_PATH = str(Path(__file__).with_name("paper_trading.db"))
 
@@ -67,6 +69,21 @@ def _ensure_paper_trade_columns() -> None:
 
 _ensure_paper_trade_columns()
 _conn.commit()
+
+
+def _max_drawdown(values: List[float]) -> float:
+    """Return the maximum peak-to-trough drawdown for an equity curve."""
+    if not values:
+        return 0.0
+    peak = values[0]
+    max_dd = 0.0
+    for value in values:
+        if value > peak:
+            peak = value
+        drawdown = peak - value
+        if drawdown > max_dd:
+            max_dd = drawdown
+    return float(max_dd)
 
 
 def record_paper_trade(
@@ -240,3 +257,113 @@ def fetch_paper_trades_filtered(
 
     cur = _conn.execute(" ".join(query), tuple(params))
     return cur.fetchall()
+
+
+def fetch_strategy_performance(symbol: Optional[str] = None) -> List[StrategyPerformanceRow]:
+    """Return aggregated performance rows grouped by strategy and symbol."""
+
+    symbol_filter = symbol.upper() if symbol else None
+    base_query = (
+        """
+        SELECT
+            strategy_name,
+            symbol,
+            pnl,
+            holding_minutes,
+            ts
+        FROM paper_trades
+        WHERE strategy_name IS NOT NULL AND TRIM(strategy_name) <> ''
+        """
+    )
+
+    params: List[Any] = []
+    if symbol_filter:
+        base_query += " AND symbol = ?"
+        params.append(symbol_filter)
+
+    base_query += " ORDER BY strategy_name ASC, symbol ASC, ts ASC"
+
+    rows = _conn.execute(base_query, tuple(params)).fetchall()
+    grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
+
+    for row in rows:
+        raw_strategy = row["strategy_name"]
+        if raw_strategy is None:
+            continue
+        strategy_name = raw_strategy.strip()
+        if not strategy_name:
+            continue
+        symbol_value = row["symbol"]
+        key = (strategy_name, symbol_value)
+
+        stats = grouped.setdefault(
+            key,
+            {
+                "strategy_name": strategy_name,
+                "symbol": symbol_value,
+                "total_trades": 0,
+                "win_trades": 0,
+                "loss_trades": 0,
+                "net_pnl": 0.0,
+                "pnl_sequence": [],
+                "holding_samples": [],
+            },
+        )
+
+        pnl_value = float(row["pnl"] or 0.0)
+        stats["total_trades"] += 1
+        if pnl_value > 0:
+            stats["win_trades"] += 1
+        elif pnl_value < 0:
+            stats["loss_trades"] += 1
+        stats["net_pnl"] += pnl_value
+        stats["pnl_sequence"].append(pnl_value)
+
+        holding_value = row["holding_minutes"]
+        if holding_value is not None:
+            try:
+                stats["holding_samples"].append(float(holding_value))
+            except (TypeError, ValueError):
+                pass
+
+    results: List[StrategyPerformanceRow] = []
+    for key in sorted(grouped.keys()):
+        stats = grouped[key]
+        total = stats["total_trades"]
+        net_pnl = float(stats["net_pnl"])
+        win_trades = stats["win_trades"]
+        loss_trades = stats["loss_trades"]
+        win_rate = (win_trades / total) if total > 0 else 0.0
+        avg_trade_pnl_value = (net_pnl / total) if total > 0 else 0.0
+
+        holding_samples: List[float] = stats["holding_samples"]
+        avg_holding = (
+            sum(holding_samples) / len(holding_samples)
+            if holding_samples
+            else None
+        )
+
+        running = 0.0
+        equity_curve: List[float] = []
+        for pnl in stats["pnl_sequence"]:
+            running += pnl
+            equity_curve.append(running)
+        max_drawdown = _max_drawdown(equity_curve)
+
+        results.append(
+            StrategyPerformanceRow(
+                strategy_name=stats["strategy_name"],
+                symbol=stats["symbol"],
+                total_trades=total,
+                win_trades=win_trades,
+                loss_trades=loss_trades,
+                win_rate=float(win_rate),
+                net_pnl=net_pnl,
+                max_drawdown=float(max_drawdown),
+                avg_trade_pnl=float(avg_trade_pnl_value),
+                avg_holding_minutes=
+                    float(avg_holding) if avg_holding is not None else None,
+            )
+        )
+
+    return results

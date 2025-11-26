@@ -32,6 +32,7 @@ from models import (
     PaperTradeRecord,
     EquitySnapshot,
     PaperPerformanceSummary,
+    StrategyPerformanceRow,
     ExecutionMode,
     ExecutionModeResponse,
     ExecutionModeUpdateRequest,
@@ -50,6 +51,7 @@ from storage import (
     fetch_recent_trades,
     fetch_equity_history,
     fetch_paper_trades_filtered,
+    fetch_strategy_performance,
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -543,3 +545,15 @@ async def get_paper_performance_summary(
         )
 
     return _summarize_trades(rows)
+
+
+@router.get(
+    "/paper/strategy-performance",
+    response_model=List[StrategyPerformanceRow],
+)
+async def get_strategy_performance(
+    symbol: Optional[str] = None,
+) -> List[StrategyPerformanceRow]:
+    """Return per-strategy paper performance grouped by symbol."""
+
+    return fetch_strategy_performance(symbol)

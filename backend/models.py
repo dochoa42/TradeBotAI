@@ -281,3 +281,16 @@ class PaperPerformanceSummary(BaseModel):
     worst_trade_pnl: Optional[float] = None
     avg_holding_minutes: Optional[float] = None
 
+
+class StrategyPerformanceRow(BaseModel):
+    strategy_name: str
+    symbol: str
+    total_trades: int
+    win_trades: int
+    loss_trades: int
+    win_rate: float
+    net_pnl: float
+    max_drawdown: float
+    avg_trade_pnl: float
+    avg_holding_minutes: Optional[float] = None
+

@@ -5,6 +5,7 @@ import {
   EquitySnapshot,
   PaperPerformanceSummary,
   ExecutionModeResponse,
+  StrategyPerformanceRow,
 } from "../types/trading";
 
 type KillSwitchState = {
@@ -141,6 +142,22 @@ export async function fetchPaperSummary(
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Failed to fetch paper summary: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchStrategyPerformance(
+  symbol?: string
+): Promise<StrategyPerformanceRow[]> {
+  const params = new URLSearchParams();
+  if (symbol && symbol !== "ALL") {
+    params.set("symbol", symbol);
+  }
+  const qs = params.toString();
+  const url = `${BASE_URL}/paper/strategy-performance${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error("Failed to fetch strategy performance");
   }
   return res.json();
 }

@@ -147,3 +147,16 @@ export interface PaperPerformanceSummary {
   worst_trade_pnl: number | null;
   avg_holding_minutes: number | null;
 }
+
+export interface StrategyPerformanceRow {
+  strategy_name: string;
+  symbol: string;
+  total_trades: number;
+  win_trades: number;
+  loss_trades: number;
+  win_rate: number; // 0-1
+  net_pnl: number;
+  max_drawdown: number;
+  avg_trade_pnl: number;
+  avg_holding_minutes?: number | null;
+}
