@@ -11,10 +11,16 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from broker_client import STUB_BROKER_CLIENT
+from broker_client import (
+    STUB_BROKER_CLIENT,
+    BrokerOrderRequest,
+    BrokerOrderType,
+    BrokerSide,
+    BrokerTimeInForce,
+)
 from models import (
     LiveOrder,
     LivePosition,
@@ -26,6 +32,9 @@ from models import (
     PaperTradeRecord,
     EquitySnapshot,
     PaperPerformanceSummary,
+    ExecutionMode,
+    ExecutionModeResponse,
+    ExecutionModeUpdateRequest,
 )
 from risk import (
     RISK_CONFIG,
@@ -51,6 +60,7 @@ _ = STUB_BROKER_CLIENT
 # Phase 10.6: UI "Live Trading" tab uses paper mode only.
 # Actual live trading will be wired later and gated by risk.LIVE_TRADING_ENABLED.
 CURRENT_MODE: TradingMode = "paper"
+CURRENT_EXECUTION_MODE: ExecutionMode = ExecutionMode.PAPER
 _paper_equity: float = 2000.0
 _paper_start_of_day_equity: float = _paper_equity
 _paper_positions: Dict[str, LivePosition] = {}
@@ -61,6 +71,93 @@ _current_day: date = date.today()
 def _current_unix_ms() -> int:
     """Return current Unix timestamp in milliseconds."""
     return int(time.time() * 1000)
+
+
+def _map_place_request_to_broker(req: PlacePaperOrderRequest) -> BrokerOrderRequest:
+    side = BrokerSide.BUY if req.side == "buy" else BrokerSide.SELL
+    order_type = (
+        BrokerOrderType.MARKET
+        if req.type == "market"
+        else BrokerOrderType.LIMIT
+    )
+    limit_price = req.price if order_type == BrokerOrderType.LIMIT else None
+    return BrokerOrderRequest(
+        symbol=req.symbol,
+        side=side,
+        qty=req.qty,
+        order_type=order_type,
+        time_in_force=BrokerTimeInForce.GTC,
+        limit_price=limit_price,
+    )
+
+
+def _register_local_fill(
+    *,
+    order_id: str,
+    req: PlacePaperOrderRequest,
+    fill_price: float,
+    entry_signal_time: int,
+) -> None:
+    """Mirror a filled order into the paper state for UI continuity."""
+    pos_side = "long" if req.side == "buy" else "short"
+    order = LiveOrder(
+        id=order_id,
+        symbol=req.symbol,
+        side=req.side,
+        qty=req.qty,
+        type=req.type,
+        price=fill_price,
+        status="filled",
+        strategy_name=req.strategy_name,
+        alpha_score=req.alpha_score,
+        tags=req.tags,
+        entry_signal_time=entry_signal_time,
+    )
+    _paper_orders[order_id] = order
+
+    pos_key = f"{req.symbol}:{pos_side}"
+    existing = _paper_positions.get(pos_key)
+    if existing:
+        total_qty = existing.size + req.qty
+        if total_qty > 0:
+            weighted_price = (
+                (existing.entry_price * existing.size) + (fill_price * req.qty)
+            ) / total_qty
+        else:
+            weighted_price = existing.entry_price
+        strategy_name = existing.strategy_name
+        entry_signal_time_value = existing.entry_signal_time
+        alpha_score = (
+            req.alpha_score
+            if req.alpha_score is not None
+            else existing.alpha_score
+        )
+        tags = req.tags if req.tags is not None else existing.tags
+        _paper_positions[pos_key] = LivePosition(
+            symbol=req.symbol,
+            side=pos_side,
+            size=total_qty,
+            entry_price=weighted_price,
+            current_price=weighted_price,
+            unrealized_pnl=0.0,
+            strategy_name=strategy_name,
+            alpha_score=alpha_score,
+            tags=tags,
+            entry_signal_time=entry_signal_time_value,
+        )
+    else:
+        _paper_positions[pos_key] = LivePosition(
+            symbol=req.symbol,
+            side=pos_side,
+            size=req.qty,
+            entry_price=fill_price,
+            current_price=fill_price,
+            unrealized_pnl=0.0,
+            strategy_name=req.strategy_name,
+            alpha_score=req.alpha_score,
+            tags=req.tags,
+            entry_signal_time=entry_signal_time,
+        )
 
 
 def _max_drawdown_absolute(values: List[float]) -> float:
@@ -161,6 +258,24 @@ def _flatten_position(req: FlattenPaperPositionRequest) -> None:
     del _paper_positions[pos_key]
 
 
+async def _route_flatten_through_stub(req: FlattenPaperPositionRequest) -> None:
+    pos_key = f"{req.symbol}:{req.side}"
+    pos = _paper_positions.get(pos_key)
+    if not pos or pos.size <= 0:
+        return
+
+    broker_side = BrokerSide.SELL if req.side == "long" else BrokerSide.BUY
+    broker_request = BrokerOrderRequest(
+        symbol=req.symbol,
+        side=broker_side,
+        qty=pos.size,
+        order_type=BrokerOrderType.LIMIT,
+        time_in_force=BrokerTimeInForce.GTC,
+        limit_price=req.exit_price,
+    )
+    await STUB_BROKER_CLIENT.place_order(broker_request)
+
+
 @router.get("/paper/status", response_model=LiveStatus)
 async def get_paper_status() -> LiveStatus:
     """Return the current in-memory paper trading snapshot."""
@@ -182,6 +297,32 @@ def _deserialize_tags(raw: Any) -> Optional[Dict[str, Any]]:
     return parsed if isinstance(parsed, dict) else None
 
 
+@router.get("/execution-mode", response_model=ExecutionModeResponse)
+async def get_execution_mode() -> ExecutionModeResponse:
+    """Return the current execution routing mode for the live engine."""
+    return ExecutionModeResponse(mode=CURRENT_EXECUTION_MODE)
+
+
+@router.post("/execution-mode", response_model=ExecutionModeResponse)
+async def update_execution_mode(
+    body: ExecutionModeUpdateRequest,
+) -> ExecutionModeResponse:
+    """Update the execution routing mode (paper vs broker stub)."""
+    global CURRENT_EXECUTION_MODE
+
+    if body.mode not in {
+        ExecutionMode.PAPER,
+        ExecutionMode.BROKER_STUB,
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="Execution mode not supported yet",
+        )
+
+    CURRENT_EXECUTION_MODE = body.mode
+    return ExecutionModeResponse(mode=CURRENT_EXECUTION_MODE)
+
+
 @router.post("/paper/place_order", response_model=LiveStatus)
 async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     global _paper_equity
@@ -192,73 +333,33 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
     if not decision.allowed:
         return _status()
 
-    # TODO: When CURRENT_MODE switches to "live", route through STUB_BROKER_CLIENT.place_order
-    # (and later a real broker implementation) instead of the in-memory engine below.
-
-    price = req.price if req.price is not None else 0.0
     resolved_entry_signal_time = (
         req.entry_signal_time if req.entry_signal_time is not None else _current_unix_ms()
     )
-    order_id = str(uuid4())
-    pos_side = "long" if req.side == "buy" else "short"
-    order = LiveOrder(
-        id=order_id,
-        symbol=req.symbol,
-        side=req.side,
-        qty=req.qty,
-        type=req.type,
-        price=price,
-        status="filled",
-        strategy_name=req.strategy_name,
-        alpha_score=req.alpha_score,
-        tags=req.tags,
-        entry_signal_time=resolved_entry_signal_time,
-    )
-    _paper_orders[order_id] = order
-
-    pos_key = f"{req.symbol}:{pos_side}"
-    existing = _paper_positions.get(pos_key)
-    if existing:
-        total_qty = existing.size + req.qty
-        if total_qty > 0:
-            weighted_price = (
-                (existing.entry_price * existing.size) + (price * req.qty)
-            ) / total_qty
-        else:
-            weighted_price = existing.entry_price
-        strategy_name = existing.strategy_name
-        entry_signal_time = existing.entry_signal_time
-        alpha_score = (
-            req.alpha_score
-            if req.alpha_score is not None
-            else existing.alpha_score
-        )
-        tags = req.tags if req.tags is not None else existing.tags
-        _paper_positions[pos_key] = LivePosition(
-            symbol=req.symbol,
-            side=pos_side,
-            size=total_qty,
-            entry_price=weighted_price,
-            current_price=weighted_price,
-            unrealized_pnl=0.0,
-            strategy_name=strategy_name,
-            alpha_score=alpha_score,
-            tags=tags,
-            entry_signal_time=entry_signal_time,
-        )
-    else:
-        _paper_positions[pos_key] = LivePosition(
-            symbol=req.symbol,
-            side=pos_side,
-            size=req.qty,
-            entry_price=price,
-            current_price=price,
-            unrealized_pnl=0.0,
-            strategy_name=req.strategy_name,
-            alpha_score=req.alpha_score,
-            tags=req.tags,
+    if CURRENT_EXECUTION_MODE == ExecutionMode.PAPER:
+        fill_price = req.price if req.price is not None else 0.0
+        _register_local_fill(
+            order_id=str(uuid4()),
+            req=req,
+            fill_price=fill_price,
             entry_signal_time=resolved_entry_signal_time,
         )
+    elif CURRENT_EXECUTION_MODE == ExecutionMode.BROKER_STUB:
+        broker_request = _map_place_request_to_broker(req)
+        broker_order = await STUB_BROKER_CLIENT.place_order(broker_request)
+        fill_price = (
+            broker_order.avg_fill_price
+            or broker_order.limit_price
+            or 0.0
+        )
+        _register_local_fill(
+            order_id=broker_order.id,
+            req=req,
+            fill_price=fill_price,
+            entry_signal_time=resolved_entry_signal_time,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported execution mode")
 
     return _status()
 
@@ -266,9 +367,19 @@ async def place_paper_order(req: PlacePaperOrderRequest) -> LiveStatus:
 @router.post("/paper/cancel_order", response_model=LiveStatus)
 async def cancel_paper_order(req: CancelPaperOrderRequest) -> LiveStatus:
     order = _paper_orders.get(req.order_id)
-    if order and order.status == "new":
-        _paper_orders[req.order_id] = LiveOrder(**{**order.dict(), "status": "canceled"})
-    # TODO: Mirror cancellations to STUB_BROKER_CLIENT once live trading mode is enabled.
+    if CURRENT_EXECUTION_MODE == ExecutionMode.PAPER:
+        if order and order.status == "new":
+            _paper_orders[req.order_id] = LiveOrder(
+                **{**order.dict(), "status": "canceled"}
+            )
+    elif CURRENT_EXECUTION_MODE == ExecutionMode.BROKER_STUB:
+        await STUB_BROKER_CLIENT.cancel_order(req.order_id)
+        if order:
+            _paper_orders[req.order_id] = LiveOrder(
+                **{**order.dict(), "status": "canceled"}
+            )
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported execution mode")
     return _status()
 
 
@@ -298,7 +409,11 @@ async def get_paper_risk_config() -> RiskConfig:
 @router.post("/paper/flatten", response_model=LiveStatus)
 async def flatten_paper_position(req: FlattenPaperPositionRequest) -> LiveStatus:
     """Flatten a paper position at a provided exit price."""
-    # TODO: When live trading is active, issue closing orders through STUB_BROKER_CLIENT.
+    if CURRENT_EXECUTION_MODE == ExecutionMode.BROKER_STUB:
+        await _route_flatten_through_stub(req)
+    elif CURRENT_EXECUTION_MODE != ExecutionMode.PAPER:
+        raise HTTPException(status_code=400, detail="Unsupported execution mode")
+
     _flatten_position(req)
     return _status()
 

@@ -5,6 +5,7 @@ import {
   PaperTradeRecord,
   EquitySnapshot,
   PaperPerformanceSummary,
+  ExecutionMode,
 } from "../types/trading";
 import {
   fetchPaperStatus,
@@ -15,6 +16,7 @@ import {
   fetchPaperTrades,
   fetchEquityHistory,
   fetchPaperSummary,
+  fetchExecutionMode,
 } from "../api/liveTrading";
 import {
   ResponsiveContainer,
@@ -69,6 +71,7 @@ export const LiveTradingPanel: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<string>("ALL");
   const [selectedStrategy, setSelectedStrategy] = useState<string>("ALL");
   const [summary, setSummary] = useState<PaperPerformanceSummary | null>(null);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("paper");
 
   const equityChartData = useMemo(
     () =>
@@ -140,6 +143,15 @@ export const LiveTradingPanel: React.FC = () => {
         if (active) {
           setError((err as Error).message);
         }
+      }
+
+      try {
+        const execData = await fetchExecutionMode();
+        if (active) {
+          setExecutionMode(execData.mode);
+        }
+      } catch (err) {
+        // Ignore execution mode fetch errors; keep last known value for badge.
       }
     }
 
@@ -331,6 +343,15 @@ export const LiveTradingPanel: React.FC = () => {
         </div>
         {status && (
           <div className="flex flex-wrap gap-3 items-center">
+            <span
+              className={`px-2 py-1 rounded text-xs font-semibold text-slate-100 border border-slate-700 ${
+                executionMode === "paper" ? "bg-slate-700" : "bg-amber-700"
+              }`}
+            >
+              {executionMode === "paper"
+                ? "Execution: PAPER"
+                : "Execution: BROKER (STUB)"}
+            </span>
             <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-200 border border-slate-700">
               Mode: {status.mode}
             </span>

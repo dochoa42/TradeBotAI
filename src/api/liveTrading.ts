@@ -4,6 +4,7 @@ import {
   PaperTradeRecord,
   EquitySnapshot,
   PaperPerformanceSummary,
+  ExecutionModeResponse,
 } from "../types/trading";
 
 type KillSwitchState = {
@@ -17,6 +18,14 @@ export async function fetchPaperStatus(): Promise<LiveStatus> {
   const res = await fetch(`${BASE_URL}/paper/status`);
   if (!res.ok) {
     throw new Error(`Failed to fetch paper status: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchExecutionMode(): Promise<ExecutionModeResponse> {
+  const res = await fetch(`${BASE_URL}/execution-mode`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch execution mode");
   }
   return res.json();
 }

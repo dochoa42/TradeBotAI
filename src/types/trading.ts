@@ -59,6 +59,12 @@ export type MultiChartState = {
 
 export type TradingMode = "backtest" | "paper" | "live";
 
+export type ExecutionMode = "paper" | "broker_stub";
+
+export interface ExecutionModeResponse {
+  mode: ExecutionMode;
+}
+
 export interface LivePosition {
   symbol: string;
   side: "long" | "short";

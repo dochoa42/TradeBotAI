@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Literal, Optional
 
@@ -167,6 +168,20 @@ class BacktestResponse(BaseModel):
 
 
 TradingMode = Literal["backtest", "paper", "live"]
+
+
+class ExecutionMode(str, Enum):
+    PAPER = "paper"
+    BROKER_STUB = "broker_stub"
+    # future: BROKER_ALPACA_PAPER, BROKER_ALPACA_LIVE
+
+
+class ExecutionModeResponse(BaseModel):
+    mode: ExecutionMode
+
+
+class ExecutionModeUpdateRequest(BaseModel):
+    mode: ExecutionMode
 
 
 class LivePosition(BaseModel):
