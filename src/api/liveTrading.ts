@@ -8,6 +8,7 @@ import {
   StrategyPerformanceRow,
   StrategyComparisonRow,
   Interval,
+  DataProvider,
 } from "../types/trading";
 
 type KillSwitchState = {
@@ -26,13 +27,11 @@ export type Candle = {
   volume?: number;
 };
 
-type CandleProvider = "api" | "csv";
-
 type FetchCandlesParams = {
   symbol: string;
   interval: Interval;
   limit?: number;
-  provider?: CandleProvider;
+  provider?: DataProvider;
 };
 
 export async function fetchSymbolCandles({
@@ -41,8 +40,10 @@ export async function fetchSymbolCandles({
   limit = 500,
   provider = "api",
 }: FetchCandlesParams): Promise<Candle[]> {
+  const normalizedSymbol =
+    provider === "alpaca" ? symbol.toUpperCase() : symbol;
   const params = new URLSearchParams({
-    symbol,
+    symbol: normalizedSymbol,
     interval,
     limit: String(limit),
     provider,

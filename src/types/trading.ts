@@ -1,5 +1,7 @@
 import type { TvCandlePoint } from "../components/TvCandles";
 
+export type DataProvider = "csv" | "api" | "alpaca";
+
 export type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 
 export type EquityPoint = {

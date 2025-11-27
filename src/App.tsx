@@ -16,6 +16,7 @@ import type {
   BacktestSummary,
   ChartPoint,
   Trade,
+  DataProvider,
 } from "./types/trading";
 import { INDICATOR_CATALOG, IndicatorConfig } from "./config/indicatorCatalog";
 
@@ -23,7 +24,6 @@ import { INDICATOR_CATALOG, IndicatorConfig } from "./config/indicatorCatalog";
 // Types & Constants
 // =============================================
 type AppView = "dashboard" | "multichart" | "simulation" | "live";
-type DataSource = "csv" | "api";
 type IndicatorSpecClient = {
   id: string;
   params: Record<string, number>;
@@ -296,10 +296,12 @@ async function fetchCandlesFromBackend(
   symbol: string,
   interval: Interval,
   limit = 500,
-  provider: DataSource = "api"
+  provider: DataProvider = "api"
 ): Promise<Candle[]> {
+  const normalizedSymbol =
+    provider === "alpaca" ? symbol.toUpperCase() : symbol;
   const url = `${API_BASE}/api/candles?symbol=${encodeURIComponent(
-    symbol
+    normalizedSymbol
   )}&interval=${interval}&limit=${limit}&provider=${provider}`;
   const r = await fetch(url);
   if (!r.ok) {
@@ -377,8 +379,8 @@ export default function App() {
   const [tp, setTp] = useState<number>(100);
   const [sl, setSl] = useState<number>(50);
   const [walkForward, setWalkForward] = useState<boolean>(false);
-  // Data source: 'api' (Binance) or 'csv' (local history)
-  const [dataSource, setDataSource] = useState<DataSource>("api");
+  // Data source: 'api' (Binance), 'csv' (local history), or 'alpaca' (US equities)
+  const [dataSource, setDataSource] = useState<DataProvider>("api");
   // Strategy presets
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
@@ -653,7 +655,7 @@ export default function App() {
   };
 
   // ----- AI backtest -----
-  async function runAiBacktest() {
+  async function runAiBacktest(provider: DataProvider = dataSource) {
     try {
       setIsRunningBacktest(true);
       setApiError(null);
@@ -669,8 +671,11 @@ export default function App() {
         };
       });
 
+      const normalizedSymbol =
+        provider === "alpaca" ? symbol.toUpperCase() : symbol;
+
       const body = {
-        symbol,
+        symbol: normalizedSymbol,
         interval: tf,
         params: {
           thr,
@@ -678,13 +683,13 @@ export default function App() {
           sl, // % SL
           walkForward,
         },
-          starting_balance: startingBalance,
-          risk_per_trade_percent: riskPerTradePct,
-          max_daily_loss_percent: maxDailyLossPct,
+        starting_balance: startingBalance,
+        risk_per_trade_percent: riskPerTradePct,
+        max_daily_loss_percent: maxDailyLossPct,
         indicators: indicatorsForBackend,
       };
 
-      const res = await fetch(`${API_BASE}/api/backtest?provider=${dataSource}`, {
+      const res = await fetch(`${API_BASE}/api/backtest?provider=${provider}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -760,18 +765,21 @@ export default function App() {
   }
 
   // ----- AI signals (overlay) -----
-  async function loadAiSignals() {
+  async function loadAiSignals(provider: DataProvider = dataSource) {
     try {
       setIsLoadingSignals(true);
       setApiError(null);
 
+      const normalizedSymbol =
+        provider === "alpaca" ? symbol.toUpperCase() : symbol;
+
       const res = await fetch(
-      `${API_BASE}/api/ai/signals?provider=${dataSource}`,
-      {
+        `${API_BASE}/api/ai/signals?provider=${provider}`,
+        {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol,
+          symbol: normalizedSymbol,
           interval: tf,
           limit: 500,
           indicators: DEFAULT_AI_INDICATORS,
@@ -963,12 +971,13 @@ export default function App() {
               <span className="uppercase tracking-wider text-slate-400">Source</span>
               <select
                 value={dataSource}
-                onChange={(e) => setDataSource(e.target.value as DataSource)}
+                onChange={(e) => setDataSource(e.target.value as DataProvider)}
                 className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 aria-label="Select data source"
               >
                 <option value="api">API (Binance)</option>
                 <option value="csv">CSV (Local)</option>
+                <option value="alpaca">Alpaca (US stocks)</option>
               </select>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs">
