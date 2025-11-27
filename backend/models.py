@@ -10,6 +10,7 @@ except ImportError:  # pragma: no cover - allow running as script
 
 # Intervals your UI uses; map 1:1 to Binance
 Interval = Literal["1m", "5m", "15m", "1h", "4h", "1d"]
+DataProvider = Literal["csv", "api", "alpaca"]
 
 class Candle(BaseModel):
     ts: int = Field(..., description="Unix ms")

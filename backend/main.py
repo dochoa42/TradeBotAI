@@ -1,4 +1,4 @@
-from typing import Optional, List, Literal
+from typing import Optional, List
 
 from pathlib import Path
 from datetime import datetime
@@ -18,6 +18,7 @@ from models import (
     Candle,
     CandleResponse,
     Interval,
+    DataProvider,
     ModelPredictRequest,
     ModelPredictResponse,
     ModelSignal,
@@ -33,6 +34,7 @@ from models import (
     Trade,
 )
 from binance_client import fetch_klines
+from alpaca_client import fetch_alpaca_bars
 from model_service import predict_signals_from_candles
 from backtest import bollinger_backtest, load_candles_dataframe
 from data_providers import CandleProvider, CsvCandleProvider
@@ -66,7 +68,7 @@ app.include_router(live_router)
 app.include_router(strategy_library_router)
 
 # Simple whitelist for safety (expand as needed)
-SYMBOL_WHITELIST = {
+CRYPTO_SYMBOL_WHITELIST: set[str] = {
     "BTCUSDT",
     "ETHUSDT",
     "BNBUSDT",
@@ -77,10 +79,19 @@ SYMBOL_WHITELIST = {
     "AVAXUSDT",
 }
 
+ALPACA_SYMBOL_WHITELIST: set[str] = {
+    "AAPL",
+    "MSFT",
+    "SPY",
+    "QQQ",
+    "TSLA",
+    "NVDA",
+    "META",
+    "AMZN",
+}
+
 DEFAULT_STARTING_BALANCE = 2_000.0
 candle_provider: CandleProvider = CsvCandleProvider()
-
-DataProvider = Literal["csv", "api"]
 
 DEFAULT_CANDLES_PROVIDER: DataProvider = "api"
 DEFAULT_BACKTEST_PROVIDER: DataProvider = "csv"
@@ -88,6 +99,29 @@ DEFAULT_BACKTEST_PROVIDER: DataProvider = "csv"
 MODEL_PATH = Path(__file__).parent / "models" / "model_v1.pkl"
 ai_model: object | None = None
 ai_feature_cols: list[str] | None = None
+
+
+def _normalize_symbol(raw_symbol: str, provider: DataProvider) -> str:
+    """Uppercase symbols and drop unsupported characters per provider."""
+
+    normalized = raw_symbol.upper().strip()
+    if provider == "alpaca":
+        normalized = normalized.replace("/", "")
+    return normalized
+
+
+def _validate_symbol(symbol: str, provider: DataProvider) -> None:
+    """Ensure the requested symbol is allowed for the provider."""
+
+    if provider == "alpaca":
+        if ALPACA_SYMBOL_WHITELIST and symbol not in ALPACA_SYMBOL_WHITELIST:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Symbol not allowed for Alpaca provider: {symbol}",
+            )
+    else:
+        if symbol not in CRYPTO_SYMBOL_WHITELIST:
+            raise HTTPException(status_code=400, detail=f"Symbol not allowed: {symbol}")
 
 
 def load_ai_model() -> None:
@@ -215,7 +249,10 @@ async def get_candles(
     end_ms: Optional[int] = Query(None, description="Unix ms"),
     provider: DataProvider = Query(
         DEFAULT_CANDLES_PROVIDER,
-        description="Data source: 'api' (Binance live) or 'csv' (local history)",
+        description=(
+            "Data source: 'api' (Binance live), 'csv' (local history), or 'alpaca' "
+            "(Alpaca Market Data v2)"
+        ),
     ),
 ):
     """
@@ -223,12 +260,10 @@ async def get_candles(
 
     - provider='api' -> Binance (existing behaviour)
     - provider='csv' -> backend/data/{symbol}_{interval}.csv
+    - provider='alpaca' -> Alpaca Market Data v2
     """
-    s = symbol.upper()
-
-    if s not in SYMBOL_WHITELIST:
-        # You can relax this check, but it's helpful early on
-        raise HTTPException(status_code=400, detail=f"Symbol not allowed: {s}")
+    s = _normalize_symbol(symbol, provider)
+    _validate_symbol(s, provider)
 
     # provider = 'csv' -> read from backend/data/{symbol}_{interval}.csv
     if provider == "csv":
@@ -264,6 +299,30 @@ async def get_candles(
         if limit > 0:
             df = df.tail(limit)
         df = df.sort_values("ts")
+    elif provider == "alpaca":
+        try:
+            df = await fetch_alpaca_bars(s, interval, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Alpaca configuration error: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Alpaca fetch failed: {exc}",
+            ) from exc
+
+        if df.empty:
+            return CandleResponse(
+                symbol=s,
+                interval=interval,
+                count=0,
+                candles=[],
+                note="Alpaca returned no bars for the requested symbol/interval.",
+            )
     else:
         # provider = 'api' -> existing Binance flow
         try:
@@ -348,12 +407,15 @@ async def get_ai_signals(
     req: AiSignalsRequest,
     provider: DataProvider = Query(
         DEFAULT_CANDLES_PROVIDER,
-        description="Data source: 'api' (Binance live) or 'csv' (local history)",
+        description=(
+            "Data source: 'api' (Binance live), 'csv' (local history), or 'alpaca' "
+            "(Alpaca Market Data v2)"
+        ),
     ),
 ) -> AiSignalsResponse:
     """Serve AI signals using the trained model payload."""
 
-    symbol = req.symbol.upper()
+    symbol = _normalize_symbol(req.symbol, provider)
     interval = req.interval
 
     # 1) Load candles based on provider (mirrors /api/backtest)
@@ -374,7 +436,7 @@ async def get_ai_signals(
                 status_code=500,
                 detail=f"Failed to load candles for AI signals: {exc}",
             ) from exc
-    else:
+    elif provider == "api":
         try:
             df = await fetch_klines(
                 symbol,
@@ -394,6 +456,29 @@ async def get_ai_signals(
                 status_code=400,
                 detail="No candles returned by Binance for AI signals.",
             )
+    elif provider == "alpaca":
+        try:
+            df = await fetch_alpaca_bars(symbol, interval, limit=req.limit or 500)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Alpaca configuration error: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Alpaca fetch failed for AI signals: {exc}",
+            ) from exc
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="No candles returned by Alpaca for AI signals.",
+            )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
 
     if df.empty:
         raise HTTPException(
@@ -514,7 +599,10 @@ async def run_backtest_endpoint(
     req: BacktestRequest,
     provider: DataProvider = Query(
         DEFAULT_BACKTEST_PROVIDER,
-        description="Data source: 'csv' (local history) or 'api' (Binance live candles)",
+        description=(
+            "Data source: 'csv' (local history), 'api' (Binance live candles), or 'alpaca' "
+            "(Alpaca Market Data v2)"
+        ),
     ),
 ) -> BacktestResponse:
     """
@@ -523,7 +611,7 @@ async def run_backtest_endpoint(
     - provider='csv' -> load from backend/data/{symbol}_{interval}.csv
     - provider='api' -> fetch candles from Binance on the fly
     """
-    symbol = req.symbol.upper()
+    symbol = _normalize_symbol(req.symbol, provider)
     interval = req.interval
     params = req.params
 
@@ -545,6 +633,27 @@ async def run_backtest_endpoint(
                 status_code=500,
                 detail=f"Failed to load candles: {exc}",
             ) from exc
+    elif provider == "alpaca":
+        try:
+            df = await fetch_alpaca_bars(symbol, interval, limit=1000)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Alpaca configuration error: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Alpaca fetch failed for backtest: {exc}",
+            ) from exc
+
+        if df.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="No candles returned by Alpaca for backtest.",
+            )
     else:
         try:
             # limit=1000 is a reasonable default; tune later if needed
