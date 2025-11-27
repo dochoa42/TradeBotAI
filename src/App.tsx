@@ -148,6 +148,21 @@ const DEFAULT_AI_INDICATORS = [
   { id: "bbands", kind: "volatility", params: { length: 20, std: 2 } },
 ];
 
+const VALID_PROVIDERS: DataProvider[] = ["csv", "api", "alpaca"];
+
+function coerceProvider(
+  candidate: unknown,
+  fallback: DataProvider
+): DataProvider {
+  if (VALID_PROVIDERS.includes(candidate as DataProvider)) {
+    return candidate as DataProvider;
+  }
+  if (VALID_PROVIDERS.includes(fallback)) {
+    return fallback;
+  }
+  return "api";
+}
+
 const AI_SIGNAL_CONF_THRESHOLD = 0.55;
 
 const NAV_ITEMS: { key: AppView; label: string; hint: string }[] = [
@@ -718,6 +733,7 @@ export default function App() {
 
   // ----- AI backtest -----
   async function runAiBacktest(provider: DataProvider = dataSource) {
+    const effectiveProvider = coerceProvider(provider, dataSource);
     try {
       setIsRunningBacktest(true);
       setApiError(null);
@@ -734,7 +750,7 @@ export default function App() {
       });
 
       const normalizedSymbol =
-        provider === "alpaca" ? symbol.toUpperCase() : symbol;
+        effectiveProvider === "alpaca" ? symbol.toUpperCase() : symbol;
 
       const body = {
         symbol: normalizedSymbol,
@@ -751,11 +767,14 @@ export default function App() {
         indicators: indicatorsForBackend,
       };
 
-      const res = await fetch(`${API_BASE}/api/backtest?provider=${provider}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch(
+        `${API_BASE}/api/backtest?provider=${effectiveProvider}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
 
       if (!res.ok) {
         const text = await res.text();
@@ -828,25 +847,27 @@ export default function App() {
 
   // ----- AI signals (overlay) -----
   async function loadAiSignals(provider: DataProvider = dataSource) {
+    const effectiveProvider = coerceProvider(provider, dataSource);
     try {
       setIsLoadingSignals(true);
       setApiError(null);
 
       const normalizedSymbol =
-        provider === "alpaca" ? symbol.toUpperCase() : symbol;
+        effectiveProvider === "alpaca" ? symbol.toUpperCase() : symbol;
 
       const res = await fetch(
-        `${API_BASE}/api/ai/signals?provider=${provider}`,
+        `${API_BASE}/api/ai/signals?provider=${effectiveProvider}`,
         {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: normalizedSymbol,
-          interval: tf,
-          limit: 500,
-          indicators: DEFAULT_AI_INDICATORS,
-        }),
-      });
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: normalizedSymbol,
+            interval: tf,
+            limit: 500,
+            indicators: DEFAULT_AI_INDICATORS,
+          }),
+        }
+      );
 
       if (!res.ok) {
         const text = await res.text();
@@ -1033,7 +1054,12 @@ export default function App() {
               <span className="uppercase tracking-wider text-slate-400">Source</span>
               <select
                 value={dataSource}
-                onChange={(e) => setDataSource(e.target.value as DataProvider)}
+                onChange={(e) => {
+                  const value = e.target.value as DataProvider;
+                  if (VALID_PROVIDERS.includes(value)) {
+                    setDataSource(value);
+                  }
+                }}
                 className="bg-neutral-950 border border-neutral-700 rounded-xl px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 aria-label="Select data source"
               >
