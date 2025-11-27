@@ -3,7 +3,7 @@ import CandlesWithMarkers, {
   type Candle,
   type TradeMarker,
 } from "./CandlesWithMarkers";
-import type { Interval, PaperTradeRecord } from "../types/trading";
+import type { Interval, PaperTradeRecord, DataProvider } from "../types/trading";
 import {
   fetchPaperTrades,
   fetchSymbolCandles,
@@ -17,6 +17,7 @@ interface LiveCandlesPanelProps {
   strategy?: string;
   selectedTradeId?: number | string | null;
   onSelectTrade?: (tradeId: number | string) => void;
+  provider: DataProvider;
 }
 
 const normalizeTradeSide = (side?: string | null): TradeMarker["side"] => {
@@ -67,6 +68,7 @@ const LiveCandlesPanel: React.FC<LiveCandlesPanelProps> = ({
   strategy,
   selectedTradeId,
   onSelectTrade,
+  provider,
 }) => {
   const [interval, setInterval] = useState<Interval>("1m");
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -104,7 +106,7 @@ const LiveCandlesPanel: React.FC<LiveCandlesPanelProps> = ({
       setError(null);
       try {
         const [candleRows, tradeRows] = await Promise.all([
-          fetchSymbolCandles({ symbol, interval, limit: 300 }),
+          fetchSymbolCandles({ symbol, interval, limit: 300, provider }),
           fetchPaperTrades(200, 0, {
             symbol,
             strategy: strategy && strategy !== "ALL" ? strategy : undefined,
@@ -139,7 +141,7 @@ const LiveCandlesPanel: React.FC<LiveCandlesPanelProps> = ({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [symbol, strategy, interval]);
+  }, [symbol, strategy, interval, provider]);
 
   const handleMarkerClick = (marker: TradeMarker | null) => {
     if (!marker) return;

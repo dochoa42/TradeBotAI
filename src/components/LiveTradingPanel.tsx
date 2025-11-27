@@ -8,6 +8,7 @@ import {
   ExecutionMode,
   StrategyPerformanceRow,
   StrategyDefinition,
+  DataProvider,
 } from "../types/trading";
 import {
   fetchPaperStatus,
@@ -39,6 +40,10 @@ import { parseIndicatorsJson, summarizeIndicators } from "../utils/strategyLibra
 
 const POLL_INTERVAL = 10000;
 
+interface LiveTradingPanelProps {
+  provider: DataProvider;
+}
+
 const formatNumber = (value: number | null | undefined, digits = 2): string => {
   if (!Number.isFinite(value ?? NaN)) {
     return "-";
@@ -62,7 +67,7 @@ const formatPnlClass = (value: number | null | undefined): string => {
   return "text-slate-200";
 };
 
-export const LiveTradingPanel: React.FC = () => {
+export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) => {
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1140,6 +1145,7 @@ export const LiveTradingPanel: React.FC = () => {
           <LiveCandlesPanel
             symbol={resolvedChartSymbol}
             strategy={resolvedStrategyFilter}
+            provider={provider}
             selectedTradeId={selectedTradeId}
             onSelectTrade={handleSelectTradeFromChart}
           />

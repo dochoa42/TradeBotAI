@@ -100,13 +100,36 @@ const API_BASE =
   (import.meta as any).env?.VITE_API_URL ??
   (import.meta as any).env?.VITE_API_BASE ??
   "http://127.0.0.1:8000";
-const ALLOWED_SYMBOLS = [
+const CRYPTO_SYMBOLS = [
   "BTCUSDT",
   "ETHUSDT",
   "BNBUSDT",
   "SOLUSDT",
   "XRPUSDT",
 ] as const;
+
+const ALPACA_SYMBOLS = [
+  "AAPL",
+  "MSFT",
+  "SPY",
+  "QQQ",
+  "TSLA",
+  "NVDA",
+  "META",
+  "AMZN",
+] as const;
+
+const PROVIDER_SYMBOLS: Record<DataProvider, readonly string[]> = {
+  csv: CRYPTO_SYMBOLS,
+  api: CRYPTO_SYMBOLS,
+  alpaca: ALPACA_SYMBOLS,
+};
+
+const DEFAULT_SYMBOL_BY_PROVIDER: Record<DataProvider, string> = {
+  csv: CRYPTO_SYMBOLS[0],
+  api: CRYPTO_SYMBOLS[0],
+  alpaca: ALPACA_SYMBOLS[0],
+};
 
 const TIMEFRAME_OPTIONS: Interval[] = [
   "1m",
@@ -373,7 +396,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>(() => getInitialView());
 
   // Core state
-  const [symbol, setSymbol] = useState<string>("BTCUSDT");
+  const [symbol, setSymbol] = useState<string>(DEFAULT_SYMBOL_BY_PROVIDER.api);
   const [tf, setTf] = useState<Interval>("1m");
   const [thr, setThr] = useState<number>(50);
   const [tp, setTp] = useState<number>(100);
@@ -381,6 +404,7 @@ export default function App() {
   const [walkForward, setWalkForward] = useState<boolean>(false);
   // Data source: 'api' (Binance), 'csv' (local history), or 'alpaca' (US equities)
   const [dataSource, setDataSource] = useState<DataProvider>("api");
+  const availableSymbols = PROVIDER_SYMBOLS[dataSource];
   // Strategy presets
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
@@ -420,9 +444,38 @@ export default function App() {
   // Multi-chart state
   const [multiViewEnabled, setMultiViewEnabled] = useState(false);
   const [multiCharts, setMultiCharts] = useState<MultiChartState[]>(() =>
-    DEFAULT_MULTI_INTERVALS.map((interval) => createMultiTile("BTCUSDT", interval))
+    DEFAULT_MULTI_INTERVALS.map((interval) =>
+      createMultiTile(DEFAULT_SYMBOL_BY_PROVIDER.api, interval)
+    )
   );
   const [showFullscreenChart, setShowFullscreenChart] = useState(false);
+
+  useEffect(() => {
+    setSymbol((prev) => {
+      const normalized = dataSource === "alpaca" ? prev.toUpperCase() : prev;
+      if (availableSymbols.includes(normalized)) {
+        return normalized;
+      }
+      return availableSymbols[0];
+    });
+  }, [availableSymbols, dataSource]);
+
+  useEffect(() => {
+    setMultiCharts((prev) =>
+      prev.map((tile, index) => {
+        const normalizedSymbol =
+          dataSource === "alpaca" ? tile.symbol.toUpperCase() : tile.symbol;
+        if (availableSymbols.includes(normalizedSymbol)) {
+          if (tile.symbol === normalizedSymbol) {
+            return tile;
+          }
+          return { ...tile, symbol: normalizedSymbol };
+        }
+        const fallbackSymbol = availableSymbols[index % availableSymbols.length];
+        return { ...tile, symbol: fallbackSymbol };
+      })
+    );
+  }, [availableSymbols, dataSource]);
 
   // Keep ?view in sync for deep links / new tab
   useEffect(() => {
@@ -492,10 +545,17 @@ export default function App() {
       setLoadingCandles(true);
       setCandlesError(null);
       try {
-        const s = (ALLOWED_SYMBOLS as readonly string[]).includes(symbol)
-          ? symbol
-          : "BTCUSDT";
-        const data = await fetchCandlesFromBackend(s, tf, 500, dataSource);
+        const normalizedSymbol =
+          dataSource === "alpaca" ? symbol.toUpperCase() : symbol;
+        const safeSymbol = availableSymbols.includes(normalizedSymbol)
+          ? normalizedSymbol
+          : availableSymbols[0];
+        const data = await fetchCandlesFromBackend(
+          safeSymbol,
+          tf,
+          500,
+          dataSource
+        );
         if (!cancelled) setCandles(data);
       } catch (err: any) {
         console.error("fetchCandlesFromBackend failed:", err);
@@ -547,9 +607,11 @@ export default function App() {
 
       (async () => {
         try {
-          const sym = (ALLOWED_SYMBOLS as readonly string[]).includes(tileInfo.symbol)
-            ? tileInfo.symbol
-            : "BTCUSDT";
+          const normalizedSymbol =
+            dataSource === "alpaca" ? tileInfo.symbol.toUpperCase() : tileInfo.symbol;
+          const sym = availableSymbols.includes(normalizedSymbol)
+            ? normalizedSymbol
+            : availableSymbols[0];
           const fetched = await fetchCandlesFromBackend(
             sym,
             tileInfo.interval,
@@ -586,7 +648,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [multiViewEnabled, multiChartFetchKey, smaPeriod, bbStd, dataSource]);
+  }, [multiViewEnabled, multiChartFetchKey, smaPeriod, bbStd, dataSource, availableSymbols]);
 
   const handleTileChange = (id: string, patch: Partial<MultiChartState>) => {
     setMultiCharts((prev) =>
@@ -944,7 +1006,7 @@ export default function App() {
                 onChange={(e) => setSymbol(e.target.value)}
                 className="bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
-                {ALLOWED_SYMBOLS.map((s) => (
+                {availableSymbols.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
@@ -1244,7 +1306,7 @@ export default function App() {
       {multiViewEnabled ? (
         <MultiChartGrid
           tiles={multiChartTilesWithOverlays}
-          symbols={ALLOWED_SYMBOLS}
+          symbols={availableSymbols}
           timeframeOptions={TIMEFRAME_OPTIONS}
           indicators={indicatorToggles}
           onTileChange={handleTileChange}
@@ -1282,7 +1344,7 @@ export default function App() {
   const liveTradingSection = (
     <section className="max-w-7xl mx-auto px-4 mt-6">
       <div className="rounded-2xl bg-neutral-900/80 border border-neutral-800 p-6">
-        <LiveTradingPanel />
+        <LiveTradingPanel provider={dataSource} />
       </div>
     </section>
   );
@@ -1318,7 +1380,7 @@ export default function App() {
         <DashboardView
           symbol={symbol}
           interval={tf}
-          symbols={ALLOWED_SYMBOLS}
+          symbols={availableSymbols}
           timeframeOptions={TIMEFRAME_OPTIONS}
           onSymbolChange={setSymbol}
           onIntervalChange={(next) => setTf(next)}
