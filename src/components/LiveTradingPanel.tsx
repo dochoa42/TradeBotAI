@@ -39,6 +39,8 @@ import {
 import { parseIndicatorsJson, summarizeIndicators } from "../utils/strategyLibrary";
 
 const POLL_INTERVAL = 10000;
+const LIVE_SYMBOL_STORAGE_KEY = "liveSymbol";
+const LIVE_SYMBOL_EVENT = "tb-live-symbol-change";
 
 interface LiveTradingPanelProps {
   provider: DataProvider;
@@ -72,7 +74,13 @@ export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [symbol, setSymbol] = useState<string>(() => {
+    if (typeof window === "undefined") {
+      return "BTCUSDT";
+    }
+    const stored = window.localStorage.getItem(LIVE_SYMBOL_STORAGE_KEY);
+    return (stored ?? "BTCUSDT").toUpperCase();
+  });
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [qty, setQty] = useState(0.01);
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
@@ -313,6 +321,48 @@ export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) 
       window.clearInterval(id);
     };
   }, [selectedSymbol, selectedStrategy]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(LIVE_SYMBOL_STORAGE_KEY, symbol);
+    window.dispatchEvent(
+      new CustomEvent(LIVE_SYMBOL_EVENT, { detail: { symbol } })
+    );
+  }, [symbol]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== LIVE_SYMBOL_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+      setSymbol(event.newValue.toUpperCase());
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleLiveSymbol = (event: Event) => {
+      const detail = (event as CustomEvent<{ symbol?: string }>).detail;
+      if (!detail?.symbol) {
+        return;
+      }
+      const next = detail.symbol.toUpperCase();
+      setSymbol((current) => (current === next ? current : next));
+    };
+    window.addEventListener(LIVE_SYMBOL_EVENT, handleLiveSymbol);
+    return () => {
+      window.removeEventListener(LIVE_SYMBOL_EVENT, handleLiveSymbol);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;

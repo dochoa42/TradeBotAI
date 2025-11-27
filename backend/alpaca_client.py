@@ -48,6 +48,23 @@ def _empty_df() -> pd.DataFrame:
     return pd.DataFrame(columns=_EMPTY_COLUMNS)
 
 
+def _dummy_bar_df(ts: datetime, price: float = 0.0) -> pd.DataFrame:
+    """Return a single-candle DataFrame to keep downstream code happy."""
+
+    return pd.DataFrame(
+        [
+            {
+                "ts": pd.to_datetime(ts, utc=True),
+                "open": float(price),
+                "high": float(price),
+                "low": float(price),
+                "close": float(price),
+                "volume": 0.0,
+            }
+        ]
+    )
+
+
 async def fetch_alpaca_bars(
     symbol: str,
     interval: Interval,
@@ -97,28 +114,34 @@ async def fetch_alpaca_bars(
     start_str = _fmt(start_dt)
     end_str = _fmt(end_dt)
 
-    params = {
-        "timeframe": tf,
-        "limit": limit_int,
-        "start": start_str,
-        "end": end_str,
-        "adjustment": "raw",
-        "feed": "iex",
-    }
-
     url = f"{ALPACA_DATA_BASE_URL}/stocks/{symbol}/bars"
 
-    logger.info(
-        "Alpaca bars request: symbol={} interval={} limit={} start={} end={}",
-        symbol,
-        interval,
-        limit_int,
-        start_str,
-        end_str,
-    )
+    async def _request_window(
+        client: httpx.AsyncClient,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[dict]:
+        start_iso = _fmt(window_start)
+        end_iso = _fmt(window_end)
+        params = {
+            "timeframe": tf,
+            "limit": limit_int,
+            "start": start_iso,
+            "end": end_iso,
+            "adjustment": "raw",
+            "feed": "iex",
+        }
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        logger.info(
+            "Alpaca bars request: symbol={} interval={} limit={} start={} end={}",
+            symbol,
+            interval,
+            limit_int,
+            start_iso,
+            end_iso,
+        )
+
+        try:
             resp = await client.get(
                 url,
                 params=params,
@@ -128,21 +151,37 @@ async def fetch_alpaca_bars(
                 },
             )
             resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        logger.error("Failed to fetch bars from Alpaca: {}", exc)
-        return _empty_df()
+        except httpx.HTTPError as exc:
+            logger.error("Failed to fetch bars from Alpaca: {}", exc)
+            return []
 
-    data = resp.json()
-    bars = data.get("bars") or []
+        payload = resp.json()
+        bars_payload = payload.get("bars") or []
 
-    if not bars:
-        logger.warning(
-            "Alpaca returned no bars for {} ({}). params={}",
-            symbol,
-            interval,
-            params,
-        )
-        return _empty_df()
+        if not bars_payload:
+            logger.warning(
+                "Alpaca returned no bars for {} ({}) with window {} -> {}",
+                symbol,
+                interval,
+                start_iso,
+                end_iso,
+            )
+        return bars_payload
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        bars = await _request_window(client, start_dt, end_dt)
+
+        if not bars:
+            fallback_start = start_dt - timedelta(days=7)
+            bars = await _request_window(client, fallback_start, end_dt)
+
+            if not bars:
+                logger.error(
+                    "Alpaca empty after fallback for {} ({}); returning dummy bar",
+                    symbol,
+                    interval,
+                )
+                return _dummy_bar_df(end_dt)
 
     df = pd.DataFrame(
         [
