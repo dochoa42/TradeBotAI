@@ -68,9 +68,11 @@ type CandleSeriesWithMarkers = ISeriesApi<"Candlestick"> & {
   setMarkers(markers: SeriesMarker<Time>[]): void;
 };
 
-type NumericTimeCandle<T extends { time: any }> = T & { _tvTime: number };
+type NumericTimeCandle<T extends { time?: any; ts?: any }> = T & {
+  _tvTime: number;
+};
 
-function normalizeCandlesByTime<T extends { time: any }>(
+function normalizeCandlesByTime<T extends { time?: any; ts?: any }>(
   candles: T[] | undefined | null,
 ): NumericTimeCandle<T>[] {
   if (!candles || candles.length === 0) return [];
