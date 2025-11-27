@@ -422,16 +422,31 @@ const TvCandles: React.FC<TvCandlesProps> = ({
         line.applyOptions({ color: overlay.color });
       }
 
-      const mappedData: LineData<Time>[] = [];
+      // Build a time-deduped, sorted array for the overlay
+      const mapByTime = new Map<number, LineData<Time>>();
+
       (overlay.data || []).forEach((point) => {
         const t = tsToSeconds(point);
         const value = Number(point.value);
         if (t == null || !Number.isFinite(value)) return;
-        mappedData.push({ time: t as Time, value });
+
+        // last write wins for the same timestamp
+        mapByTime.set(t, { time: t as Time, value });
       });
 
-      mappedData.sort((a, b) => (a.time as number) - (b.time as number));
-      line.setData(mappedData);
+      const mappedData = Array.from(mapByTime.values()).sort(
+        (a, b) => (a.time as number) - (b.time as number),
+      );
+
+      try {
+        line.setData(mappedData);
+      } catch (err) {
+        console.error(
+          "TvCandles: overlay setData failed (likely non-ascending times)",
+          err,
+          mappedData.slice(0, 5),
+        );
+      }
     });
   }, [overlays]);
 
