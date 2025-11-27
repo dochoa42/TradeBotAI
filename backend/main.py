@@ -334,7 +334,7 @@ async def get_candles(
 
     records = [
         Candle(
-            ts=int(row.ts),
+            ts=int(pd.to_datetime(row.ts).value // 1_000_000),
             open=float(row.open),
             high=float(row.high),
             low=float(row.low),

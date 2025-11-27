@@ -152,7 +152,7 @@ async def fetch_alpaca_bars(
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.error("Failed to fetch bars from Alpaca: {}", exc)
+            logger.error("Failed to fetch bars from Alpaca: %s", exc)
             return []
 
         payload = resp.json()
@@ -160,7 +160,7 @@ async def fetch_alpaca_bars(
 
         if not bars_payload:
             logger.warning(
-                "Alpaca returned no bars for {} ({}) with window {} -> {}",
+                "Alpaca returned no bars for %s (%s) with window %s -> %s",
                 symbol,
                 interval,
                 start_iso,
@@ -177,7 +177,7 @@ async def fetch_alpaca_bars(
 
             if not bars:
                 logger.error(
-                    "Alpaca empty after fallback for {} ({}); returning dummy bar",
+                    "Alpaca empty after fallback for %s (%s); returning dummy bar",
                     symbol,
                     interval,
                 )
