@@ -3,13 +3,14 @@ import {
   createChart,
   CandlestickSeries,
   LineSeries,
-  type CandlestickData,
+  type BarData,
   type IChartApi,
   type ISeriesApi,
   type LineData,
   type SeriesMarker,
   type Time,
   type MouseEventParams,
+  type UTCTimestamp,
 } from "lightweight-charts";
 
 export type TvCandlePoint = {
@@ -98,6 +99,57 @@ function tsToSeconds(point: {
 
 const baseContainerClass = "w-full h-full min-h-[320px]";
 
+function prepareSeriesData(candles: TvCandleData[]): BarData[] {
+  if (!Array.isArray(candles) || !candles.length) {
+    return [];
+  }
+
+  const cleaned = candles
+    .map((c) => {
+      const time = tsToSeconds(c);
+      const open = Number(c.open);
+      const high = Number(c.high);
+      const low = Number(c.low);
+      const close = Number(c.close);
+
+      if (
+        time == null ||
+        !Number.isFinite(open) ||
+        !Number.isFinite(high) ||
+        !Number.isFinite(low) ||
+        !Number.isFinite(close)
+      ) {
+        return null;
+      }
+
+      return {
+        time: time as UTCTimestamp,
+        open,
+        high,
+        low,
+        close,
+      } as BarData;
+    })
+    .filter((v): v is BarData => Boolean(v))
+    .sort((a, b) => (a.time as number) - (b.time as number));
+
+  if (!cleaned.length) {
+    return [];
+  }
+
+  const deduped: BarData[] = [];
+  cleaned.forEach((bar) => {
+    const last = deduped[deduped.length - 1];
+    if (last && last.time === bar.time) {
+      deduped[deduped.length - 1] = bar;
+    } else {
+      deduped.push(bar);
+    }
+  });
+
+  return deduped;
+}
+
 // --- component -------------------------------------------------------
 
 const TvCandles: React.FC<TvCandlesProps> = ({
@@ -181,42 +233,15 @@ const TvCandles: React.FC<TvCandlesProps> = ({
   useEffect(() => {
     if (!seriesRef.current) return;
 
-    const mapped: CandlestickData<Time>[] = [];
+    const prepared = prepareSeriesData(data ?? []);
 
-    (data || []).forEach((d) => {
-      const t = tsToSeconds(d);
-      if (t == null) return;
-
-      const open = Number(d.open);
-      const high = Number(d.high);
-      const low = Number(d.low);
-      const close = Number(d.close);
-
-      if (
-        !Number.isFinite(open) ||
-        !Number.isFinite(high) ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(close)
-      ) {
-        return;
+    try {
+      seriesRef.current.setData(prepared);
+      if (prepared.length && chartRef.current) {
+        chartRef.current.timeScale().fitContent();
       }
-
-      mapped.push({
-        time: t as Time,
-        open,
-        high,
-        low,
-        close,
-      });
-    });
-
-    // lightweight-charts requires ascending time
-    mapped.sort((a, b) => (a.time as number) - (b.time as number));
-
-    seriesRef.current.setData(mapped);
-
-    if (mapped.length && chartRef.current) {
-      chartRef.current.timeScale().fitContent();
+    } catch (error) {
+      console.error("TvCandles setData error", error);
     }
   }, [data]);
 

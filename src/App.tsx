@@ -91,7 +91,6 @@ type ModelPredictResponse = {
     trained_at?: string | null;
     horizon?: number | null;
     threshold?: number | null;
-    feature_cols: string[];
   };
 };
 
@@ -130,6 +129,8 @@ const DEFAULT_SYMBOL_BY_PROVIDER: Record<DataProvider, string> = {
   api: CRYPTO_SYMBOLS[0],
   alpaca: ALPACA_SYMBOLS[0],
 };
+
+const LIVE_SYMBOL_STORAGE_KEY = "liveSymbol";
 
 const TIMEFRAME_OPTIONS: Interval[] = [
   "1m",
@@ -411,7 +412,11 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>(() => getInitialView());
 
   // Core state
-  const [symbol, setSymbol] = useState<string>(DEFAULT_SYMBOL_BY_PROVIDER.api);
+  const [activeSymbol, setActiveSymbol] = useState<string>(
+    DEFAULT_SYMBOL_BY_PROVIDER.api
+  );
+  const symbol = activeSymbol;
+  const setSymbol = setActiveSymbol;
   const [tf, setTf] = useState<Interval>("1m");
   const [thr, setThr] = useState<number>(50);
   const [tp, setTp] = useState<number>(100);
@@ -464,6 +469,36 @@ export default function App() {
     )
   );
   const [showFullscreenChart, setShowFullscreenChart] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(LIVE_SYMBOL_STORAGE_KEY);
+    if (!stored) return;
+    setActiveSymbol((prev) => {
+      const normalized = stored.toUpperCase();
+      return prev === normalized ? prev : normalized;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LIVE_SYMBOL_STORAGE_KEY, activeSymbol);
+  }, [activeSymbol]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== LIVE_SYMBOL_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+      setActiveSymbol((prev) => {
+        const normalized = event.newValue.toUpperCase();
+        return prev === normalized ? prev : normalized;
+      });
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   useEffect(() => {
     setSymbol((prev) => {
@@ -611,7 +646,7 @@ export default function App() {
       symbol: tile.symbol,
       interval: tile.interval,
     }));
-    const fallbackSeries = computeChartPoints(buildDemoCandles(), smaPeriod, bbStd);
+    const noDataMessage = "No data returned for this symbol / provider.";
 
     tilesToFetch.forEach((tileInfo) => {
       setMultiCharts((prev) =>
@@ -638,20 +673,32 @@ export default function App() {
           setMultiCharts((prev) =>
             prev.map((tile) =>
               tile.id === tileInfo.id
-                ? { ...tile, candles: chartPoints, loading: false, error: null }
+                ? {
+                    ...tile,
+                    candles: chartPoints,
+                    loading: false,
+                    error: chartPoints.length ? null : noDataMessage,
+                  }
                 : tile
             )
           );
         } catch (err: any) {
           if (cancelled) return;
+          console.error("Failed to load candles", err);
+          const rawMessage =
+            typeof err === "string" ? err : err?.message ?? "";
+          const isNoData = /4\d{2}/.test(rawMessage) || rawMessage.includes("No data");
+          const friendly = isNoData
+            ? noDataMessage
+            : rawMessage || "Failed to load chart";
           setMultiCharts((prev) =>
             prev.map((tile) =>
               tile.id === tileInfo.id
                 ? {
                     ...tile,
-                    candles: fallbackSeries,
+                    candles: [],
                     loading: false,
-                    error: err?.message || "Failed to load chart",
+                    error: friendly,
                   }
                 : tile
             )
@@ -1370,7 +1417,11 @@ export default function App() {
   const liveTradingSection = (
     <section className="max-w-7xl mx-auto px-4 mt-6">
       <div className="rounded-2xl bg-neutral-900/80 border border-neutral-800 p-6">
-        <LiveTradingPanel provider={dataSource} />
+        <LiveTradingPanel
+          provider={dataSource}
+          symbol={activeSymbol}
+          onSymbolChange={setActiveSymbol}
+        />
       </div>
     </section>
   );

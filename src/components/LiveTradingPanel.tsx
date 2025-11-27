@@ -39,11 +39,11 @@ import {
 import { parseIndicatorsJson, summarizeIndicators } from "../utils/strategyLibrary";
 
 const POLL_INTERVAL = 10000;
-const LIVE_SYMBOL_STORAGE_KEY = "liveSymbol";
-const LIVE_SYMBOL_EVENT = "tb-live-symbol-change";
 
 interface LiveTradingPanelProps {
   provider: DataProvider;
+  symbol: string;
+  onSymbolChange: (symbol: string) => void;
 }
 
 const formatNumber = (value: number | null | undefined, digits = 2): string => {
@@ -69,18 +69,14 @@ const formatPnlClass = (value: number | null | undefined): string => {
   return "text-slate-200";
 };
 
-export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) => {
+export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({
+  provider,
+  symbol,
+  onSymbolChange,
+}) => {
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [symbol, setSymbol] = useState<string>(() => {
-    if (typeof window === "undefined") {
-      return "BTCUSDT";
-    }
-    const stored = window.localStorage.getItem(LIVE_SYMBOL_STORAGE_KEY);
-    return (stored ?? "BTCUSDT").toUpperCase();
-  });
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [qty, setQty] = useState(0.01);
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
@@ -107,6 +103,17 @@ export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) 
   const [flashTradeId, setFlashTradeId] = useState<number | string | null>(null);
   const tradeRowRefs = useRef<Map<number | string, HTMLTableRowElement>>(new Map());
   const selectionSourceRef = useRef<"chart" | "table" | null>(null);
+
+  const handleSymbolChange = useCallback(
+    (next: string, opts?: { skipIfSame?: boolean }) => {
+      const normalized = next.toUpperCase();
+      if (opts?.skipIfSame && normalized === symbol.toUpperCase()) {
+        return;
+      }
+      onSymbolChange(normalized);
+    },
+    [onSymbolChange, symbol]
+  );
 
   const equityChartData = useMemo(
     () =>
@@ -321,48 +328,6 @@ export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) 
       window.clearInterval(id);
     };
   }, [selectedSymbol, selectedStrategy]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(LIVE_SYMBOL_STORAGE_KEY, symbol);
-    window.dispatchEvent(
-      new CustomEvent(LIVE_SYMBOL_EVENT, { detail: { symbol } })
-    );
-  }, [symbol]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key !== LIVE_SYMBOL_STORAGE_KEY || !event.newValue) {
-        return;
-      }
-      setSymbol(event.newValue.toUpperCase());
-    };
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const handleLiveSymbol = (event: Event) => {
-      const detail = (event as CustomEvent<{ symbol?: string }>).detail;
-      if (!detail?.symbol) {
-        return;
-      }
-      const next = detail.symbol.toUpperCase();
-      setSymbol((current) => (current === next ? current : next));
-    };
-    window.addEventListener(LIVE_SYMBOL_EVENT, handleLiveSymbol);
-    return () => {
-      window.removeEventListener(LIVE_SYMBOL_EVENT, handleLiveSymbol);
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -787,7 +752,7 @@ export const LiveTradingPanel: React.FC<LiveTradingPanelProps> = ({ provider }) 
                   <input
                     type="text"
                     value={symbol}
-                    onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                    onChange={(e) => handleSymbolChange(e.target.value)}
                     className="mt-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-50 focus:border-emerald-400 focus:outline-none"
                   />
                 </label>

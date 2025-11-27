@@ -1,91 +1,81 @@
-# TradeBotAI Workspace Summary (updated Nov 26, 2025)
+# TradeBotAI Workspace Summary (Nov 27, 2025)
 
-## Purpose & Flow
+## Mission Snapshot
 
-- Full-stack crypto trading research environment combining FastAPI services (`backend/` and root-level `main.py`) with a Vite/React front-end (`src/`) and supporting ML/offline tooling.
-- Backend exposes REST endpoints for synthetic candles, Binance-powered history download, AI signal generation, Bollinger/ML backtests, dataset building, and an in-memory paper-trading engine with risk controls and SQLite persistence.
-- Frontend delivers dashboard, multi-chart, simulation, and live-trading experiences that call the `/api` routes and visualize candles, indicators, and performance analytics.
-- Data/ML layer stores historical CSVs and parquet datasets under `backend/data/`, plus trained model payloads in `backend/models/`, enabling offline training scripts (`build_dataset.py`, `train_model.py`) and runtime inference (`model_service.py`).
+- Full-stack research and paper-trading lab that pairs a FastAPI backend (`backend/`) and an experimental synthetic-data FastAPI (`main.py`) with a Vite/React TypeScript UI (`src/`).
+- Backend responsibilities span market data ingestion (Binance + Alpaca), CSV caching, indicator/feature engineering, ML model inference, Bollinger/AI backtests, and a paper-trading router backed by SQLite (`backend/paper_trading.db`).
+- Frontend delivers four major views (Dashboard, Multi-Chart, Simulation Desk, Live Trading) that visualize `lightweight-charts`, AI markers, and live/paper status via `/api/*` endpoints.
+- Supporting assets include model artifacts (`backend/models/`), labeled datasets (`backend/data/datasets/`), Windows batch scripts for local workflows, and dual Python/Node toolchains.
 
-## Technology Stack
+## Runtime Components
 
-- **Backend**: FastAPI + Uvicorn (`requirements.txt`), extensive use of `pandas`, `numpy`, `joblib`, `httpx`, `scikit-learn`, `pandas-ta-classic`, etc. (imports reveal these extra dependencies are required even though they are not listed in `requirements.txt`).
-- **Frontend**: React 18 + TypeScript + Vite 5 (`package.json`), `lightweight-charts`, `recharts`, custom indicator catalog plus Tailwind CSS (`tailwind.config.js`, `postcss.config.js`).
-- **Storage**: SQLite WAL database (`backend/paper_trading.db*`) managed via `backend/storage.py` for paper trades, equity history, resets, and backtest summaries.
-- **Tooling**: Node-based build artifacts (`dist/`, `node_modules/`), Python virtual environments (`.venv/`, `backend/.venv/`), VS Code settings (`.vscode/`).
-- **Scripts**: Windows batch helpers for setup and runtime orchestration (`run_backend.bat`, `run_frontend.bat`, `setup_trading_bot.bat`, `start_trading_bot2.bat`, plus `run_backend.txt` with inline instructions).
+- `main.py`: standalone FastAPI that emits random OHLCV bars documented in `README.md`; useful for decoupled UI prototyping.
+- `backend/main.py`: production FastAPI app that exposes `/api` routes for candles, history downloads, ML signal prediction, Bollinger backtests, paper/live trading controls, and strategy library endpoints. Imports `pandas`, `numpy`, `joblib`, `scikit-learn`, `httpx`, etc.
+- `src/`: Vite React SPA (TypeScript) orchestrated by `App.tsx` (~1,600 LOC) with domain-specific components (`components/`), API helpers (`api/`), indicator catalog config, and shared types.
+- `backend/ml/`: offline tooling for AI signal synthesis and batch backtests; ties into `backend/models/` artifacts.
+- Batch scripts (`run_backend.bat`, `run_frontend.bat`, `setup_trading_bot.bat`, `start_trading_bot2.bat`) codify Windows-friendly dev workflows.
 
-## Top-Level Layout
+## Top-Level Map
 
-| Path / File                                                                                                 | Role & Notes                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `main.py`                                                                                                   | Standalone FastAPI service that emits synthetic OHLCV candles for quick UI prototyping (`README.md` documents this minimal API).                                                                                                                       |
-| `backend/`                                                                                                  | Primary trading backend with FastAPI app (`backend/main.py`), data ingestion, ML, backtesting, live-paper trading router, and SQLite persistence. Includes its own `.venv/` and `.vscode/`.                                                            |
-| `src/`                                                                                                      | Vite/React TypeScript SPA: `App.tsx` orchestration (1.5k LOC) plus domain-specific components (Dashboard, MultiChartGrid, SimulationDesk, LiveTradingPanel, TvCandles). Contains `api/` clients, `config/indicatorCatalog.ts`, and `types/trading.ts`. |
-| `public/public/`                                                                                            | Static assets currently only `favicon.svg`; note the double `public/` nesting.                                                                                                                                                                         |
-| `dist/`                                                                                                     | Built frontend output (Vite) with `assets/`, duplicated `public/`, and production `index.html`.                                                                                                                                                        |
-| `README.md`                                                                                                 | Describes the lightweight synthetic-candles API; does not yet reflect the richer backend/front-end stack.                                                                                                                                              |
-| `requirements.txt`                                                                                          | Lists only `fastapi`, `uvicorn[standard]`, `pyarrow`; missing other backend dependencies mentioned earlier.                                                                                                                                            |
-| `package.json` / `package-lock.json`                                                                        | Frontend dependencies & scripts (`dev`, `build`, `preview`).                                                                                                                                                                                           |
-| `tailwind.config.js`, `postcss.config.js`, `tsconfig.json`, `tsconfig.tsbuildinfo`, `vite.config.ts`        | Frontend build, styling, and TS compiler configuration; proxy `/api` to `http://127.0.0.1:8000`.                                                                                                                                                       |
-| `run_backend.bat`, `run_frontend.bat`, `setup_trading_bot.bat`, `start_trading_bot2.bat`, `run_backend.txt` | Windows automation for starting services, activating venvs, and guiding developers.                                                                                                                                                                    |
-| `.venv/`, `.vscode/`, `__pycache__/`                                                                        | Environment/config artifacts at the repo root (Python venv, VS Code settings, bytecode caches).                                                                                                                                                        |
-| `node_modules/`                                                                                             | Installed npm dependencies for the frontend workspace.                                                                                                                                                                                                 |
-| `Big picture data flow.docx`                                                                                | Conceptual documentation artifact (binary, likely authored outside code).                                                                                                                                                                              |
-| `TradeBotAI/`                                                                                               | Nested Git repo placeholder (`.git/`, `.gitattributes` only).                                                                                                                                                                                          |
-| `trading-bot-ui/trading-bot-ui/.env`                                                                        | Legacy or alternate UI environment file; contents not referenced elsewhere.                                                                                                                                                                            |
-| `temp.txt`, `index.html`, `run_backend.txt`, `run_backend.bat`, `run_backend.bat`                           | Miscellaneous helpers / placeholders.                                                                                                                                                                                                                  |
+| Path                                                                                                        | Role                                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `main.py`                                                                                                   | Synthetic FastAPI for lightweight candle demos; referenced by `README.md`.                                                  |
+| `backend/`                                                                                                  | Primary trading backend (FastAPI app, data providers, ML, storage, live trading, SQLite DB, `.venv/`, `.vscode/`).          |
+| `src/`                                                                                                      | React 18 + TS + Vite frontend, including `components/`, `api/`, `config/`, `types/`, and `utils/`.                          |
+| `public/public/`                                                                                            | Only holds `favicon.svg`; duplicated inside `dist/public/`.                                                                 |
+| `dist/`                                                                                                     | Built Vite output (`index.html`, hashed assets, duplicated `public/`).                                                      |
+| `requirements.txt`                                                                                          | Minimal dependency list (FastAPI stack + `pyarrow`, `httpx`, `python-dotenv`); missing several imports used by the backend. |
+| `package.json`                                                                                              | Frontend scripts (`vite`, `tsc -b`) and deps (`react`, `lightweight-charts`, `recharts`, Tailwind pipeline).                |
+| `tailwind.config.js`, `postcss.config.js`, `vite.config.ts`, `tsconfig.json`, `tsconfig.tsbuildinfo`        | Frontend build/styling/compiler plumbing; dev proxy to `http://127.0.0.1:8000` for `/api`.                                  |
+| `run_backend.bat`, `run_frontend.bat`, `setup_trading_bot.bat`, `start_trading_bot2.bat`, `run_backend.txt` | Windows helpers for environment setup and launching backend/frontend servers.                                               |
+| `.venv/`, `backend/.venv/`, `.vscode/`, `__pycache__/`                                                      | Tooling artifacts for Python and VS Code.                                                                                   |
+| `node_modules/`                                                                                             | Installed npm packages; large and typically git-ignored.                                                                    |
+| `backend/data/`                                                                                             | Cached CSV histories (BTC/ETH 1m–1h) and parquet datasets (`datasets/BTCUSDT_1m_L5_T0.3.parquet`).                          |
+| `backend/models/`                                                                                           | Serialized RandomForest models + metadata (`model_v1.pkl`, `rf_BTCUSDT_1m.pkl`, `.meta.json`).                              |
+| `TradeBotAI/`                                                                                               | Nested Git repo stub (`.git/`, `.gitattributes`)—likely leftover submodule marker.                                          |
+| `trading-bot-ui/trading-bot-ui/.env`                                                                        | Legacy UI environment placeholder; not referenced by current Vite app.                                                      |
+| `Big picture data flow.docx`, `temp.txt`, `index.html`                                                      | Miscellaneous documentation/scratch artifacts.                                                                              |
 
 ## Backend Highlights (`backend/`)
 
-- **API entrypoint**: `backend/main.py` registers CORS, mounts `/api` routes, whitelists supported symbols, exposes health, candle retrieval (from Binance via `binance_client.py` or CSV via `data_providers.py`), history download, AI signals, Bollinger backtests, live trading router (`backend/live_trading.py`), and records backtest runs in SQLite.
-- **Market data**: `binance_client.py` fetches klines with host fallback logic; `fetch_history.py` CLI dumps candles to `backend/data/*.csv`; `data_providers.py` supplies CSV-backed candles for offline use.
-- **Indicator & feature engineering**: `indicators.py` (pandas-ta), `feature_engineering.py`, and `features.py` build the columns consumed by ML models and inference.
-- **Backtesting & ML**:
-  - `backtest.py` implements both signal-driven and Bollinger strategies plus metrics (win rate, profit factor, Sharpe, drawdown).
-  - `ml/backtest_engine.py` runs dual (baseline vs AI) backtests and reports confusion matrices/feature importances from trained models.
-  - `ml/ai_signals.py` synthesizes AI signals from CSV candles using Bollinger-based heuristics.
-  - `build_dataset.py` and `train_model.py` create parquet datasets and RandomForest models saved under `backend/models/` (`model_v1.pkl`, `rf_BTCUSDT_1m.pkl`, etc. with `.meta.json`).
-  - `model_service.py` loads cached models + metadata and turns candles into inference-ready feature matrices.
-- **Live/paper trading**: `live_trading.py` exposes `/api/live/*` routes for paper status, order placement/cancellation, equity resets, kill switch, strategy analytics; integrates `risk.py` (kill switch + position/daily loss guards), `broker_client.py` (protocol + stub broker), and `storage.py` (SQLite CRUD + migrations for trades, equity, resets, backtests, strategy performance).
-- **Data & persistence**: `backend/data/` stores raw CSVs per symbol/interval plus parquet datasets; `backend/models/` stores serialized models; `paper_trading.db`, `.db-wal`, `.db-shm` hold WAL-mode SQLite state.
+- **API & routing**: `main.py` (backend) registers CORS, symbol whitelists, `/api/candles` (Binance, CSV, Alpaca via `binance_client.py`/`alpaca_client.py`/`data_providers.py`), `/api/history/download`, `/api/model/predict`, `/api/backtest/bollinger`, `/api/ai/signals`, plus routers for live trading (`live_trading.py`) and strategy library (`strategy_library.py`).
+- **Data ingestion**: `fetch_history.py` and `data_providers.py` bridge Binance REST downloads into `backend/data/*.csv`; `CandleProvider` abstraction allows swapping to API/CSV/Alpaca providers.
+- **Indicators & features**: `indicators.py` (pandas-ta classic), `feature_engineering.py`, and `features.py` compute Bollinger/SMA/EMA/RSI features consumed by ML models and backtests.
+- **Model lifecycle**: `build_dataset.py` builds parquet datasets, `train_model.py` trains RandomForest models saved under `backend/models/`, `model_service.py` loads cached payloads for inference, and `ml/backtest_engine.py` + `ml/ai_signals.py` evaluate/synthesize AI signals.
+- **Backtesting**: `backtest.py` exposes Bollinger backtests plus helper metrics (Sharpe, max drawdown, win%); `load_candles_dataframe` centralizes CSV loading.
+- **Live & risk**: `live_trading.py` exposes `/api/live/*` endpoints for paper engine status/orders/equity resets; `broker_client.py` defines broker interface, `risk.py` enforces kill-switches and per-trade guards, `storage.py` persists trades/equity/backtest summaries in SQLite (WAL mode files tracked).
+- **Config & secrets**: `config.py` reads environment variables (Binance, Alpaca keys) via `python-dotenv`; ensure `.env` handling aligns with deployment.
 
 ## Frontend Highlights (`src/`)
 
-- **Stateful shell**: `App.tsx` manages navigation (`Dashboard`, `Multi-Chart Grid`, `Simulation Desk`, `Live Trading`), symbol/timeframe selection, indicator toggles, AI/backtest requests, multi-chart tiling, and overlays (SMA/EMA/Bollinger) with helper utilities (SMA/EMA/StdDev implementations, random demo data fallback, API fetchers, tile factories).
-- **Components**:
-  - `components/ChartPanel.tsx` (indicator toggles), `MultiChartGrid.tsx`, `SimulationDesk.tsx` + `SimulationViewer.tsx`, `DashboardView.tsx`, `LiveTradingPanel.tsx`, `StrategyComparisonCard.tsx`, `TvCandles.tsx` (TradingView-like rendering).
-  - Comments are sparse but logic handles chart overlays, AI markers (`TvMarkerData`), multi-symbol comparisons, simulation playback.
-- **API clients**: `api/liveTrading.ts` mirrors FastAPI live routes (status, execution mode, orders, kill switch, equity resets, trades, summaries, strategy performance/comparison, flattening positions).
-- **Config & types**: `config/indicatorCatalog.ts` defines available indicators and UI schema; `types/trading.ts` centralizes shared TypeScript types for candles, trades, equity points, live status, etc.
-- **Entry & styling**: `main.tsx` bootstraps React, `index.css` + Tailwind pipeline supply styling, `vite.config.ts` proxies `/api` to backend in dev.
+- **Shell (`App.tsx`)**: Handles navigation state, provider selection (`csv`/`api`/`alpaca`), indicator toggles, AI thresholding, multi-chart tile management, AI marker overlays, history download commands, and live trading interactions.
+- **Components**: `components/ChartPanel.tsx`, `MultiChartGrid.tsx`, `SimulationDesk.tsx`, `SimulationViewer.tsx`, `DashboardView.tsx`, `LiveTradingPanel.tsx`, `StrategyComparisonCard.tsx`, `StrategyLibraryPanel.tsx`, `TvCandles.tsx`, `CandlesWithMarkers.tsx`, `LiveCandlesPanel.tsx` provide chart rendering, layout, and analytics widgets.
+- **API helpers**: `api/liveTrading.ts` and `api/strategyLibrary.ts` wrap backend endpoints with typed responses (status, trades, strategies, comparisons, resets, kill switch, etc.).
+- **Config & types**: `config/indicatorCatalog.ts` defines UI-driven indicator metadata; `types/trading.ts` centralizes domain types (candles, trades, equity points, providers, live state) shared across components.
+- **Utilities & styling**: `utils/strategyLibrary.ts` houses helper transforms; `index.css`, Tailwind (`tailwind.config.js`, `postcss.config.js`) plus `vite.config.ts` manage styling and dev proxying.
 
 ## Data, Models, and Assets
 
-- `backend/data/*.csv` (BTCUSDT/ETHUSDT across 1m/5m/1h) plus `datasets/BTCUSDT_1m_L5_T0.3.parquet` for ML training.
-- `backend/models/*.pkl` and corresponding `.meta.json` store RandomForest models with feature metadata consumed by `model_service.py` and `ml/backtest_engine.py`.
-- `backend/paper_trading.db*` persists paper trading/equity/backtest records; be mindful of WAL companions (`.db-wal`, `.db-shm`).
-- `public/public/favicon.svg` and `dist/` provide runtime/static assets; duplication suggests cleanup potential.
-- `TradeBotAI/` nested Git repo and `trading-bot-ui/trading-bot-ui/.env` appear to be placeholders or historical artifacts—verify before deletion.
+- **Historical data**: CSV snapshots per symbol/interval under `backend/data/` plus parquet training datasets under `backend/data/datasets/`.
+- **Model artifacts**: `backend/models/*.pkl` + `.meta.json` for RandomForest predictors (`model_v1.pkl`, `model_rf_v1.pkl`, `rf_BTCUSDT_1m.pkl`).
+- **SQLite state**: `backend/paper_trading.db`, `.db-wal`, `.db-shm` store trades/equity/backtests for the paper engine; confirm whether these should remain versioned.
+- **Static assets**: `public/public/favicon.svg` and `dist/public/favicon.svg`; duplication suggests the asset pipeline can be flattened.
 
-## Automation & Scripts
+## Tooling & Automation
 
-- Windows batch files at root (`run_backend.bat`, `run_frontend.bat`, `setup_trading_bot.bat`, `start_trading_bot2.bat`) wrap environment activation and dev server startup; `run_backend.txt` documents the same logic inline.
-- Backend CLIs: `backend/fetch_history.py`, `backend/build_dataset.py`, `backend/train_model.py` for data acquisition and model training.
-- `run_backend.bat` (root) expects `backend/main.py` and optionally activates `.venv` before running `uvicorn main:app`. Frontend script presumably runs `npm run dev` via Vite.
+- **Python environments**: Root `.venv/` and `backend/.venv/` coexist; clarify which interpreter scripts should activate (`setup_trading_bot.bat` currently bootstraps backend). Ensure `requirements.txt` (root) includes every imported package (pandas, numpy, scikit-learn, joblib, pandas-ta-classic, sqlite-utils, etc.).
+- **Node builds**: `package.json` + `tsconfig.json` + `tsconfig.tsbuildinfo` handle Vite builds. `node_modules/` and `dist/` are generated artifacts.
+- **Batch scripts**: `run_backend.bat` runs `uvicorn backend.main:app --reload`; `run_frontend.bat` drives `npm run dev`; `setup_trading_bot.bat` chains Python venv creation + dependency installs; `start_trading_bot2.bat` appears to orchestrate both services sequentially.
 
-## Configuration & Environment Files
+## Current Issues & Fix Ideas
 
-- Python: `.venv/`, `backend/.venv/`, `requirements.txt`, implicit dependencies from code imports (pandas, numpy, scikit-learn, pandas-ta-classic, httpx, joblib, sqlite3, etc.).
-- Node/React: `package.json`, `package-lock.json`, `tsconfig.json`, `tailwind.config.js`, `postcss.config.js`, `vite.config.ts`, `tsconfig.tsbuildinfo` (TS incremental state).
-- VS Code: `.vscode/` directories at root and inside `backend/` (contents not inspected, typically hold launch/settings).
-- Misc: `TradeBotAI/.git`, `.gitattributes` (likely submodule), `trading-bot-ui/trading-bot-ui/.env` (env placeholders), `temp.txt` (scratch), `Big picture data flow.docx` (architecture diagram/reference).
+1. **README misalignment (`README.md`)**: Only documents the synthetic `main.py` service, ignoring the real backend/frontend stack. Update to describe the Trading Bot architecture, setup steps for both servers, and how to use batch scripts.
+2. **Incomplete dependencies (`requirements.txt`)**: Backend imports `pandas`, `numpy`, `scikit-learn`, `joblib`, `pandas-ta-classic`, `sqlite-utils`, etc., but the file lists only FastAPI basics plus `pyarrow`, `httpx`, `python-dotenv`. Extend the requirements list or split into backend-specific `requirements-backend.txt` to prevent runtime import errors.
+3. **Duplicated asset roots (`public/public`, `dist/public`)**: Having nested `public/public/favicon.svg` plus the same asset copied to `dist/public/` hints at incorrect `publicDir` handling in `vite.config.ts`. Consider moving assets to a single `public/` root and pointing Vite there to avoid confusion.
+4. **Synthetic vs. real backend split (`main.py` vs. `backend/main.py`)**: Two FastAPI apps with overlapping routes (`/api/candles`) can confuse deployment scripts. Decide whether the synthetic service should be a separate example (e.g., move into `examples/`) or clearly document which entry point `uvicorn` should run in production.
+5. **Version-controlled stateful artifacts (`backend/paper_trading.db*`, `dist/`, `node_modules/`)**: Database WAL files and build outputs are currently present. Ensure `.gitignore` excludes them unless intentionally committed. Storing database snapshots in git risks leaking sensitive trade/test data.
+6. **Legacy directories (`TradeBotAI/`, `trading-bot-ui/`)**: Nested `.git/` and unused `.env` files suggest unfinished submodules or legacy code. Confirm whether these should be removed, migrated, or documented to prevent accidental edits.
+7. **Dual Python environments (`.venv/` and `backend/.venv/`)**: Having two venvs increases setup friction and complicates batch scripts. Consider consolidating to one venv at the repo root (or documenting why two are required).
+8. **Lack of automated tests**: No pytest/unit tests exist for either backend or frontend. Adding regression tests (e.g., for `backtest.py`, `model_service.py`, UI hooks) would help validate trading logic and indicator math changes.
 
-## Notable Observations
-
-- `README.md` only documents the standalone synthetic-candles FastAPI and does not mention the richer backend, UI, or ML tooling—consider expanding it or linking to this summary.
-- `requirements.txt` omits several mandatory backend packages (pandas, numpy, httpx, joblib, scikit-learn, pandas-ta-classic, etc.); installing dependencies will currently fail unless developers infer them manually.
-- Static assets are nested (`public/public`) and duplicated inside `dist/public`; verify whether Vite config should instead point to a single `public/` root.
-- Multiple git roots (`.git/` at repo root and `TradeBotAI/.git/`) plus legacy folder `trading-bot-ui/trading-bot-ui` suggest prior restructuring—confirm whether they should remain or be merged.
-- SQLite database files (`backend/paper_trading.db*`) are committed; ensure this is intentional if sensitive trade history should remain local.
-- Generated artifacts (`node_modules/`, `dist/`, `tsconfig.tsbuildinfo`, `__pycache__/`, `.db-wal/.db-shm`) can be large; confirm `.gitignore` covers them if they should stay untracked.
+Use this document as the authoritative snapshot for ChatGPT or other reviewers to understand the workspace structure, identify problem areas quickly, and prioritize fixes.

@@ -9,6 +9,8 @@ import type { Interval, MultiChartState } from "../types/trading";
 
 type MultiChartTile = MultiChartState & { overlays?: TvOverlayLine[] };
 
+const CHART_NO_DATA_TEXT = "No data returned for this symbol / provider.";
+
 type MultiChartGridProps = {
   tiles: MultiChartTile[];
   symbols: readonly string[];
@@ -125,6 +127,16 @@ const MultiChartGrid: React.FC<MultiChartGridProps> = ({
                 overlays={tile.overlays ?? []}
                 className="h-full"
               />
+              {tile.error && (
+                <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl bg-slate-950/75 text-center text-xs text-slate-300">
+                  <span className="text-sm font-semibold text-slate-100">
+                    {CHART_NO_DATA_TEXT}
+                  </span>
+                  {tile.error !== CHART_NO_DATA_TEXT && (
+                    <span className="mt-1 text-slate-400">{tile.error}</span>
+                  )}
+                </div>
+              )}
             </div>
           </ChartPanel>
         );
