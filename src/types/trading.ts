@@ -160,3 +160,18 @@ export interface StrategyPerformanceRow {
   avg_trade_pnl: number;
   avg_holding_minutes?: number | null;
 }
+
+export interface StrategySideStats {
+  pnl?: number;
+  net_pnl?: number;
+  win_rate?: number;
+  max_drawdown?: number;
+  trades?: number;
+}
+
+export interface StrategyComparisonRow {
+  symbol: string;
+  strategy: string;
+  backtest: StrategySideStats | null;
+  live: StrategySideStats | null;
+}

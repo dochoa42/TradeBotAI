@@ -3,6 +3,7 @@ from typing import Optional, List, Literal
 from pathlib import Path
 from datetime import datetime
 from math import sqrt
+import json
 
 import joblib
 import numpy as np
@@ -36,6 +37,7 @@ from model_service import predict_signals_from_candles
 from backtest import bollinger_backtest, load_candles_dataframe
 from data_providers import CandleProvider, CsvCandleProvider
 from live_trading import router as live_router
+from storage import record_backtest_run
 
 try:
     from .indicators import compute_indicators, IndicatorSpec
@@ -592,6 +594,28 @@ async def run_backtest_endpoint(
 
     summary = _build_backtest_summary(equity_series, trades_list, starting_balance)
 
-    return BacktestResponse(summary=summary, equity_curve=equity_curve, trades=trades_list)
+    response = BacktestResponse(summary=summary, equity_curve=equity_curve, trades=trades_list)
+
+    params_json: Optional[str] = None
+    if params is not None:
+        try:
+            params_json = json.dumps(params.dict())
+        except (TypeError, ValueError):
+            params_json = None
+
+    strategy_name = (req.strategy_name or "-").strip() or "-"
+
+    try:
+        record_backtest_run(
+            symbol=symbol,
+            strategy_name=strategy_name,
+            interval=interval,
+            params_json=params_json,
+            result=response,
+        )
+    except Exception as exc:  # pragma: no cover - persistence errors shouldn't break API
+        print(f"[storage] Failed to persist backtest run: {exc}")
+
+    return response
 
 

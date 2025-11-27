@@ -6,6 +6,7 @@ import {
   PaperPerformanceSummary,
   ExecutionModeResponse,
   StrategyPerformanceRow,
+  StrategyComparisonRow,
 } from "../types/trading";
 
 type KillSwitchState = {
@@ -160,4 +161,31 @@ export async function fetchStrategyPerformance(
     throw new Error("Failed to fetch strategy performance");
   }
   return res.json();
+}
+
+export type StrategyComparisonParams = {
+  symbol?: string;
+  strategy?: string;
+};
+
+export async function fetchStrategyComparison(
+  params: StrategyComparisonParams = {}
+): Promise<StrategyComparisonRow[]> {
+  const search = new URLSearchParams();
+  if (params.symbol && params.symbol !== "ALL") {
+    search.set("symbol", params.symbol);
+  }
+  if (params.strategy) {
+    search.set("strategy", params.strategy);
+  }
+
+  const qs = search.toString();
+  const res = await fetch(
+    `${BASE_URL}/paper/strategy-comparison${qs ? `?${qs}` : ""}`
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch strategy comparison");
+  }
+  const payload = await res.json();
+  return Array.isArray(payload) ? payload : [payload];
 }

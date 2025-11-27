@@ -18,6 +18,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from "recharts";
+import StrategyComparisonCard from "./StrategyComparisonCard";
 
 export type DashboardSummaryMetrics = {
   pnl?: number;
@@ -458,6 +459,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           Risk metrics coming soon
         </div>
       </section>
+
+      <StrategyComparisonCard symbol={symbol} symbols={symbols} />
     </div>
   );
 };

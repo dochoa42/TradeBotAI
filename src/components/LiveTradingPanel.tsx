@@ -20,6 +20,7 @@ import {
   fetchExecutionMode,
   fetchStrategyPerformance,
 } from "../api/liveTrading";
+import StrategyComparisonCard from "./StrategyComparisonCard";
 import {
   ResponsiveContainer,
   LineChart,
@@ -913,6 +914,12 @@ export const LiveTradingPanel: React.FC = () => {
               </div>
             )}
           </div>
+
+          <StrategyComparisonCard
+            className="mt-4"
+            symbol={selectedSymbol === "ALL" ? symbol : selectedSymbol}
+            symbols={symbolOptions.filter((sym) => sym !== "ALL")}
+          />
         </>
       )}
     </div>

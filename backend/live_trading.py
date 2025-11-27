@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -33,6 +33,8 @@ from models import (
     EquitySnapshot,
     PaperPerformanceSummary,
     StrategyPerformanceRow,
+    StrategyComparisonRow,
+    StrategySideStats,
     ExecutionMode,
     ExecutionModeResponse,
     ExecutionModeUpdateRequest,
@@ -52,6 +54,8 @@ from storage import (
     fetch_equity_history,
     fetch_paper_trades_filtered,
     fetch_strategy_performance,
+    get_latest_backtest_for_strategy,
+    fetch_latest_backtest_runs,
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -557,3 +561,115 @@ async def get_strategy_performance(
     """Return per-strategy paper performance grouped by symbol."""
 
     return fetch_strategy_performance(symbol)
+
+
+def _normalize_strategy_label(value: Optional[str]) -> str:
+    if not value:
+        return "-"
+    trimmed = value.strip()
+    return trimmed if trimmed else "-"
+
+
+def _serialize_backtest_row(row: Optional[Any]) -> Optional[StrategySideStats]:
+    if row is None:
+        return None
+    return StrategySideStats(
+        pnl=float(row["pnl"]),
+        win_rate=float(row["win_rate"]),
+        max_drawdown=float(row["max_drawdown"]),
+        trades=int(row["trades"]),
+    )
+
+
+def get_live_strategy_stats(
+    symbol: Optional[str],
+    strategy_name: str,
+    *,
+    rows: Optional[List[StrategyPerformanceRow]] = None,
+) -> Optional[StrategySideStats]:
+    """Return live stats for a strategy using existing aggregates."""
+
+    dataset = rows if rows is not None else fetch_strategy_performance(symbol)
+    norm_strategy = _normalize_strategy_label(strategy_name)
+    symbol_filter = symbol.upper() if symbol else None
+
+    for row in dataset:
+        row_symbol = row.symbol.upper()
+        if symbol_filter and row_symbol != symbol_filter:
+            continue
+        row_strategy = _normalize_strategy_label(row.strategy_name)
+        if row_strategy != norm_strategy:
+            continue
+        return StrategySideStats(
+            net_pnl=float(row.net_pnl),
+            win_rate=float(row.win_rate),
+            max_drawdown=float(row.max_drawdown),
+            trades=int(row.total_trades),
+        )
+
+    return None
+
+
+@router.get(
+    "/paper/strategy-comparison",
+    response_model=Union[StrategyComparisonRow, List[StrategyComparisonRow]],
+)
+async def get_strategy_comparison(
+    symbol: Optional[str] = None,
+    strategy: Optional[str] = None,
+) -> Union[StrategyComparisonRow, List[StrategyComparisonRow]]:
+    """Compare backtest vs live metrics per strategy."""
+
+    symbol_filter = symbol.upper() if symbol else None
+    strategy_filter = strategy.strip() if strategy else None
+
+    if strategy_filter and not symbol_filter:
+        raise HTTPException(
+            status_code=400,
+            detail="strategy filter requires a symbol",
+        )
+
+    live_rows = fetch_strategy_performance(symbol_filter)
+
+    if strategy_filter:
+        norm_strategy = _normalize_strategy_label(strategy_filter)
+        backtest_row = get_latest_backtest_for_strategy(
+            symbol_filter,
+            norm_strategy,
+        )
+        return StrategyComparisonRow(
+            symbol=symbol_filter,
+            strategy=norm_strategy,
+            backtest=_serialize_backtest_row(backtest_row),
+            live=get_live_strategy_stats(
+                symbol_filter,
+                norm_strategy,
+                rows=live_rows,
+            ),
+        )
+
+    latest_backtests = fetch_latest_backtest_runs(symbol_filter)
+    keys: set[Tuple[str, str]] = set(latest_backtests.keys())
+    for row in live_rows:
+        key = (row.symbol.upper(), _normalize_strategy_label(row.strategy_name))
+        keys.add(key)
+
+    sorted_keys = sorted(keys, key=lambda item: (item[0], item[1]))
+    comparisons: List[StrategyComparisonRow] = []
+    for symbol_value, strategy_value in sorted_keys:
+        comparisons.append(
+            StrategyComparisonRow(
+                symbol=symbol_value,
+                strategy=strategy_value,
+                backtest=_serialize_backtest_row(
+                    latest_backtests.get((symbol_value, strategy_value))
+                ),
+                live=get_live_strategy_stats(
+                    symbol_value,
+                    strategy_value,
+                    rows=live_rows,
+                ),
+            )
+        )
+
+    return comparisons

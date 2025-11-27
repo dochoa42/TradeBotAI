@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -41,6 +42,19 @@ _conn.executescript(
         ts DATETIME DEFAULT CURRENT_TIMESTAMP,
         equity REAL NOT NULL,
         daily_pnl REAL NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS backtest_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        strategy_name TEXT NOT NULL,
+        interval TEXT NOT NULL,
+        params_json TEXT,
+        pnl REAL NOT NULL,
+        win_rate REAL NOT NULL,
+        max_drawdown REAL NOT NULL,
+        trades INTEGER NOT NULL
     );
     """
 )
@@ -367,3 +381,137 @@ def fetch_strategy_performance(symbol: Optional[str] = None) -> List[StrategyPer
         )
 
     return results
+
+
+def _normalize_strategy_name(strategy_name: Optional[str]) -> str:
+    if not strategy_name:
+        return "-"
+    value = strategy_name.strip()
+    return value if value else "-"
+
+
+def _extract_summary_field(summary: Any, field: str, default: float = 0.0) -> float:
+    if summary is None:
+        return float(default)
+    if hasattr(summary, field):
+        try:
+            return float(getattr(summary, field))
+        except (TypeError, ValueError):
+            return float(default)
+    if isinstance(summary, dict):
+        try:
+            value = summary.get(field, default)
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+    return float(default)
+
+
+def record_backtest_run(
+    symbol: str,
+    strategy_name: Optional[str],
+    interval: str,
+    params_json: Optional[str],
+    result: Any,
+) -> None:
+    """Persist a single backtest execution summary for later comparison."""
+
+    summary = getattr(result, "summary", None)
+    trades = getattr(result, "trades", None)
+    if summary is None and isinstance(result, dict):
+        summary = result.get("summary")
+    if trades is None and isinstance(result, dict):
+        trades = result.get("trades")
+
+    pnl = _extract_summary_field(summary, "total_pnl", 0.0)
+    win_rate = _extract_summary_field(summary, "win_pct", 0.0)
+    max_drawdown = _extract_summary_field(summary, "max_drawdown", 0.0)
+    trade_count = len(trades) if isinstance(trades, (list, tuple)) else 0
+
+    _conn.execute(
+        """
+        INSERT INTO backtest_runs (
+            created_at,
+            symbol,
+            strategy_name,
+            interval,
+            params_json,
+            pnl,
+            win_rate,
+            max_drawdown,
+            trades
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(time.time()),
+            symbol.upper(),
+            _normalize_strategy_name(strategy_name),
+            interval,
+            params_json,
+            float(pnl),
+            float(win_rate),
+            float(max_drawdown),
+            int(trade_count),
+        ),
+    )
+    _conn.commit()
+
+
+def get_latest_backtest_for_strategy(
+    symbol: str,
+    strategy_name: str,
+) -> Optional[sqlite3.Row]:
+    """Return the most recent stored backtest for the pair."""
+
+    cur = _conn.execute(
+        """
+        SELECT * FROM backtest_runs
+        WHERE symbol = ? AND strategy_name = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (symbol.upper(), _normalize_strategy_name(strategy_name)),
+    )
+    return cur.fetchone()
+
+
+def fetch_latest_backtest_runs(
+    symbol: Optional[str] = None,
+) -> Dict[Tuple[str, str], sqlite3.Row]:
+    """Return latest backtest rows keyed by (symbol, strategy)."""
+
+    clauses: List[str] = []
+    params: List[Any] = []
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol.upper())
+
+    query = [
+        """
+        SELECT
+            id,
+            created_at,
+            symbol,
+            strategy_name,
+            interval,
+            params_json,
+            pnl,
+            win_rate,
+            max_drawdown,
+            trades
+        FROM backtest_runs
+        """
+    ]
+
+    if clauses:
+        query.append("WHERE " + " AND ".join(clauses))
+
+    query.append("ORDER BY symbol ASC, strategy_name ASC, created_at DESC, id DESC")
+
+    rows = _conn.execute(" ".join(query), tuple(params)).fetchall()
+    latest: Dict[Tuple[str, str], sqlite3.Row] = {}
+    for row in rows:
+        key = (row["symbol"], row["strategy_name"])
+        if key not in latest:
+            latest[key] = row
+    return latest

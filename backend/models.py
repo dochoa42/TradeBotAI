@@ -94,6 +94,7 @@ class BacktestParams(BaseModel):
 class BacktestRequest(BaseModel):
     symbol: str
     interval: str
+    strategy_name: Optional[str] = None
     params: Optional[BacktestParams] = None  # use the real model
 
     # Account & risk controls
@@ -293,4 +294,19 @@ class StrategyPerformanceRow(BaseModel):
     max_drawdown: float
     avg_trade_pnl: float
     avg_holding_minutes: Optional[float] = None
+
+
+class StrategySideStats(BaseModel):
+    pnl: Optional[float] = None
+    net_pnl: Optional[float] = None
+    win_rate: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    trades: Optional[int] = None
+
+
+class StrategyComparisonRow(BaseModel):
+    symbol: str
+    strategy: str
+    backtest: Optional[StrategySideStats] = None
+    live: Optional[StrategySideStats] = None
 
