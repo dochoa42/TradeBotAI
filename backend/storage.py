@@ -64,6 +64,17 @@ _conn.executescript(
         max_drawdown REAL NOT NULL,
         trades INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS strategy_library (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        strategy_name TEXT NOT NULL,
+        indicators_json TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, strategy_name)
+    );
     """
 )
 
@@ -223,7 +234,7 @@ def fetch_recent_trades(
 
     if symbol:
         clauses.append("symbol = ?")
-        params.append(symbol.upper())
+        params.append(symbol.strip().upper())
 
     if strategy:
         clauses.append("strategy_name = ?")
@@ -473,6 +484,96 @@ def list_paper_strategies(symbol: Optional[str] = None) -> List[str]:
     query.append("ORDER BY strategy_name ASC")
     rows = _conn.execute(" ".join(query), tuple(params)).fetchall()
     return [row[0] for row in rows if row[0]]
+
+
+def list_strategy_definitions(symbol: Optional[str] = None) -> List[sqlite3.Row]:
+    """Return stored strategy library entries, optionally filtered by symbol."""
+
+    clauses: List[str] = []
+    params: List[Any] = []
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol.upper())
+
+    query = [
+        """
+        SELECT
+            id,
+            symbol,
+            strategy_name,
+            indicators_json,
+            notes,
+            created_at,
+            updated_at
+        FROM strategy_library
+        """
+    ]
+
+    if clauses:
+        query.append("WHERE " + " AND ".join(clauses))
+
+    query.append("ORDER BY symbol ASC, strategy_name ASC")
+
+    return _conn.execute(" ".join(query), tuple(params)).fetchall()
+
+
+def get_strategy_definition(symbol: str, strategy_name: str) -> Optional[sqlite3.Row]:
+    """Return a single strategy definition, if any."""
+
+    cur = _conn.execute(
+        """
+        SELECT
+            id,
+            symbol,
+            strategy_name,
+            indicators_json,
+            notes,
+            created_at,
+            updated_at
+        FROM strategy_library
+        WHERE symbol = ? AND strategy_name = ?
+        LIMIT 1
+        """,
+        (symbol.strip().upper(), strategy_name.strip()),
+    )
+    return cur.fetchone()
+
+
+def upsert_strategy_definition(
+    *,
+    symbol: str,
+    strategy_name: str,
+    indicators_json: str,
+    notes: str,
+) -> sqlite3.Row:
+    """Insert or update a strategy definition and return the stored row."""
+
+    normalized_symbol = (symbol or "").strip().upper()
+    if not normalized_symbol:
+        raise ValueError("symbol must be provided")
+    normalized_strategy = (strategy_name or "").strip()
+    if not normalized_strategy:
+        raise ValueError("strategy_name must be non-empty")
+
+    normalized_notes = notes.strip() if notes else ""
+
+    _conn.execute(
+        """
+        INSERT INTO strategy_library (symbol, strategy_name, indicators_json, notes)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(symbol, strategy_name) DO UPDATE SET
+            indicators_json = excluded.indicators_json,
+            notes = excluded.notes,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (normalized_symbol, normalized_strategy, indicators_json, normalized_notes),
+    )
+    _conn.commit()
+
+    row = get_strategy_definition(normalized_symbol, normalized_strategy)
+    if row is None:
+        raise RuntimeError("Failed to load strategy definition after upsert")
+    return row
 
 
 def _normalize_strategy_name(strategy_name: Optional[str]) -> str:

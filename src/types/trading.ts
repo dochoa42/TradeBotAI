@@ -180,3 +180,13 @@ export interface StrategyComparisonRow {
   backtest: StrategySideStats | null;
   live: StrategySideStats | null;
 }
+
+export interface StrategyDefinition {
+  id: number;
+  symbol: string;
+  strategy_name: string;
+  indicators_json: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}

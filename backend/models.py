@@ -315,3 +315,16 @@ class StrategyComparisonRow(BaseModel):
     backtest: Optional[StrategySideStats] = None
     live: Optional[StrategySideStats] = None
 
+
+class StrategyDefinitionIn(BaseModel):
+    symbol: str
+    strategy_name: str
+    indicators_json: str
+    notes: str = ""
+
+
+class StrategyDefinition(StrategyDefinitionIn):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+

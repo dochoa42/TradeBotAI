@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LiveStatus,
   PlacePaperOrderRequest,
@@ -7,6 +7,7 @@ import {
   PaperPerformanceSummary,
   ExecutionMode,
   StrategyPerformanceRow,
+  StrategyDefinition,
 } from "../types/trading";
 import {
   fetchPaperStatus,
@@ -23,6 +24,7 @@ import {
   fetchPaperStrategies,
 } from "../api/liveTrading";
 import StrategyComparisonCard from "./StrategyComparisonCard";
+import StrategyLibraryPanel from "./StrategyLibraryPanel";
 import LiveCandlesPanel from "./LiveCandlesPanel";
 import {
   ResponsiveContainer,
@@ -33,6 +35,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
+import { parseIndicatorsJson, summarizeIndicators } from "../utils/strategyLibrary";
 
 const POLL_INTERVAL = 10000;
 
@@ -80,7 +83,8 @@ export const LiveTradingPanel: React.FC = () => {
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("paper");
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformanceRow[]>([]);
   const [strategyPerfLoading, setStrategyPerfLoading] = useState(false);
-  const [availableStrategies, setAvailableStrategies] = useState<string[]>([]);
+  const [paperStrategies, setPaperStrategies] = useState<string[]>([]);
+  const [libraryEntries, setLibraryEntries] = useState<StrategyDefinition[]>([]);
   const [resettingEquity, setResettingEquity] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [fullHistory, setFullHistory] = useState<PaperTradeRecord[]>([]);
@@ -139,6 +143,40 @@ export const LiveTradingPanel: React.FC = () => {
         return matchesSymbol && matchesStrategy;
       }),
     [tradeHistory, selectedSymbol, selectedStrategy]
+  );
+
+  const normalizedFormSymbol = useMemo(() => symbol.trim().toUpperCase(), [symbol]);
+
+  const availableStrategies = useMemo(() => {
+    const merged = new Set<string>(paperStrategies);
+    libraryEntries
+      .filter((entry) => entry.symbol.toUpperCase() === normalizedFormSymbol)
+      .forEach((entry) => merged.add(entry.strategy_name));
+    return Array.from(merged).sort();
+  }, [paperStrategies, libraryEntries, normalizedFormSymbol]);
+
+  const selectedLibraryStrategy = useMemo(() => {
+    const trimmed = strategyName.trim();
+    if (!trimmed) return null;
+    return (
+      libraryEntries.find(
+        (entry) =>
+          entry.symbol.toUpperCase() === normalizedFormSymbol &&
+          entry.strategy_name === trimmed
+      ) ?? null
+    );
+  }, [libraryEntries, normalizedFormSymbol, strategyName]);
+
+  const selectedIndicators = useMemo(
+    () => parseIndicatorsJson(selectedLibraryStrategy?.indicators_json ?? ""),
+    [selectedLibraryStrategy]
+  );
+
+  const handleLibraryDefinitionsUpdate = useCallback(
+    (entries: StrategyDefinition[]) => {
+      setLibraryEntries(entries);
+    },
+    []
   );
 
   const resolvedChartSymbol = (
@@ -281,11 +319,11 @@ export const LiveTradingPanel: React.FC = () => {
           symbolFilter ? symbolFilter.toUpperCase() : undefined
         );
         if (active) {
-          setAvailableStrategies(rows);
+          setPaperStrategies(rows);
         }
       } catch (err) {
         if (active) {
-          setAvailableStrategies([]);
+          setPaperStrategies([]);
         }
       }
     }
@@ -779,6 +817,62 @@ export const LiveTradingPanel: React.FC = () => {
                     </select>
                   )}
                 </label>
+                <div className="md:col-span-2">
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Strategy details
+                      </span>
+                      {selectedLibraryStrategy && (
+                        <span className="text-[10px] uppercase tracking-wider text-emerald-300">
+                          From library
+                        </span>
+                      )}
+                    </div>
+                    {strategyName.trim() === "" ? (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Enter or select a strategy name to view saved indicators and notes.
+                      </p>
+                    ) : selectedLibraryStrategy ? (
+                      <div className="mt-2 space-y-2 text-sm text-slate-200">
+                        <p className="text-slate-200">
+                          {summarizeIndicators(
+                            selectedLibraryStrategy.indicators_json,
+                            "Custom stack"
+                          )}
+                        </p>
+                        {selectedIndicators.length > 0 && (
+                          <ul className="list-disc space-y-1 pl-5 text-xs text-slate-400">
+                            {selectedIndicators.map((indicator, idx) => (
+                              <li key={`selected-indicator-${idx}`}>
+                                <span className="font-semibold text-slate-200">
+                                  {indicator.label}
+                                </span>
+                                {indicator.params && Object.keys(indicator.params).length > 0 && (
+                                  <span className="text-slate-400">
+                                    {" "}-
+                                    {Object.entries(indicator.params)
+                                      .map(([key, value]) => `${key}: ${value}`)
+                                      .join(", ")}
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="text-xs text-slate-400 whitespace-pre-line">
+                          {selectedLibraryStrategy.notes?.trim()
+                            ? selectedLibraryStrategy.notes
+                            : "No notes saved for this strategy."}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-slate-500">
+                        No library entry for “{strategyName.trim()}” on {normalizedFormSymbol} yet.
+                      </p>
+                    )}
+                  </div>
+                </div>
                 <label className="flex flex-col text-sm text-slate-200">
                   Alpha Score
                   <input
@@ -1140,6 +1234,11 @@ export const LiveTradingPanel: React.FC = () => {
             className="mt-4"
             symbol={selectedSymbol === "ALL" ? symbol : selectedSymbol}
             symbols={symbolOptions.filter((sym) => sym !== "ALL")}
+          />
+          <StrategyLibraryPanel
+            className="mt-4"
+            symbol={symbol}
+            onDefinitionsChange={handleLibraryDefinitionsUpdate}
           />
         </>
       )}

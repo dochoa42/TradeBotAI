@@ -37,6 +37,7 @@ from model_service import predict_signals_from_candles
 from backtest import bollinger_backtest, load_candles_dataframe
 from data_providers import CandleProvider, CsvCandleProvider
 from live_trading import router as live_router
+from strategy_library import router as strategy_library_router
 from storage import record_backtest_run
 
 try:
@@ -62,6 +63,7 @@ app.add_middleware(
 )
 
 app.include_router(live_router)
+app.include_router(strategy_library_router)
 
 # Simple whitelist for safety (expand as needed)
 SYMBOL_WHITELIST = {
