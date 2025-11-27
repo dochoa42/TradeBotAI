@@ -9,6 +9,7 @@ import {
   type LineData,
   type SeriesMarker,
   type Time,
+  type MouseEventParams,
 } from "lightweight-charts";
 
 export type TvCandlePoint = {
@@ -23,6 +24,7 @@ export type TvCandlePoint = {
 export type TvCandleData = TvCandlePoint;
 
 export type TvMarkerData = {
+  id?: string | number;
   ts?: number;
   time?: number | string | Date;
   price?: number;
@@ -31,6 +33,8 @@ export type TvMarkerData = {
   color?: string;
   shape?: "arrowUp" | "arrowDown" | "circle";
   text?: string;
+  size?: number;
+  payload?: unknown;
 };
 
 export type TvOverlayLine = {
@@ -48,6 +52,15 @@ type TvCandlesProps = {
   markers?: TvMarkerData[];
   overlays?: TvOverlayLine[];
   className?: string;
+  selectedMarkerId?: string | number | null;
+  onMarkerClick?: (marker?: TvMarkerData) => void;
+  onMarkerHover?: (event?: MarkerHoverEvent) => void;
+};
+
+export type MarkerHoverEvent = {
+  marker?: TvMarkerData;
+  point?: { x: number; y: number };
+  containerSize?: { width: number; height: number };
 };
 
 type CandleSeriesWithMarkers = ISeriesApi<"Candlestick"> & {
@@ -92,11 +105,15 @@ const TvCandles: React.FC<TvCandlesProps> = ({
   markers = [],
   overlays = [],
   className,
+  selectedMarkerId = null,
+  onMarkerClick,
+  onMarkerHover,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<CandleSeriesWithMarkers | null>(null);
   const overlaySeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+  const markersMapRef = useRef<Map<string, TvMarkerData>>(new Map());
 
   // 1) create / destroy chart once
   useEffect(() => {
@@ -209,31 +226,97 @@ const TvCandles: React.FC<TvCandlesProps> = ({
       return;
     }
 
+    const map = markersMapRef.current;
+    map.clear();
+
     if (!markers.length) {
       seriesRef.current.setMarkers([]);
       return;
     }
 
+    const highlightId =
+      selectedMarkerId !== null && selectedMarkerId !== undefined
+        ? String(selectedMarkerId)
+        : null;
+
     const mappedMarkers: SeriesMarker<Time>[] = [];
 
-    markers.forEach((m) => {
+    markers.forEach((m, idx) => {
       const t = tsToSeconds(m);
       if (t == null) return;
+
+      const markerId = String(m.id ?? `${m.ts ?? m.time ?? idx}-${idx}`);
+      const isSelected = highlightId === markerId;
+      const defaultColor =
+        m.color ?? (m.side === "short" || m.shape === "arrowDown" ? "#ef4444" : "#22c55e");
+      const color = isSelected ? "#facc15" : defaultColor;
+      const shape = isSelected
+        ? "circle"
+        : m.shape ?? (m.side === "short" ? "arrowDown" : "arrowUp");
+      const size = isSelected ? (m.size ?? 1) + 1 : m.size;
+
       mappedMarkers.push({
+        id: markerId,
         time: t as Time,
+        price: typeof m.price === "number" ? m.price : undefined,
         position: m.position ?? "aboveBar",
-        color:
-          m.color ??
-          (m.side === "short" || m.shape === "arrowDown" ? "#ef4444" : "#22c55e"),
-        shape: m.shape ?? (m.side === "short" ? "arrowDown" : "arrowUp"),
+        color,
+        shape,
         text: m.text,
+        size,
       });
+
+      map.set(markerId, { ...m, id: markerId });
     });
 
     mappedMarkers.sort((a, b) => (a.time as number) - (b.time as number));
 
     seriesRef.current.setMarkers(mappedMarkers);
-  }, [markers]);
+  }, [markers, selectedMarkerId]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !onMarkerClick) return;
+
+    const handleClick = (param: MouseEventParams<Time>) => {
+      if (param.hoveredObjectId == null) {
+        return;
+      }
+      const marker = markersMapRef.current.get(String(param.hoveredObjectId));
+      onMarkerClick(marker);
+    };
+
+    chart.subscribeClick(handleClick);
+    return () => {
+      chart.unsubscribeClick(handleClick);
+    };
+  }, [onMarkerClick]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !onMarkerHover) return;
+
+    const handleMove = (param: MouseEventParams<Time>) => {
+      if (!param.point || param.hoveredObjectId == null) {
+        onMarkerHover(undefined);
+        return;
+      }
+      const marker = markersMapRef.current.get(String(param.hoveredObjectId));
+      const container = containerRef.current;
+      onMarkerHover({
+        marker,
+        point: { x: param.point.x, y: param.point.y },
+        containerSize: container
+          ? { width: container.clientWidth, height: container.clientHeight }
+          : undefined,
+      });
+    };
+
+    chart.subscribeCrosshairMove(handleMove);
+    return () => {
+      chart.unsubscribeCrosshairMove(handleMove);
+    };
+  }, [onMarkerHover]);
 
   // 4) overlay line series (SMA, Bollinger, etc.)
   useEffect(() => {

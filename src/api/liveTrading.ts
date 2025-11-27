@@ -7,6 +7,7 @@ import {
   ExecutionModeResponse,
   StrategyPerformanceRow,
   StrategyComparisonRow,
+  Interval,
 } from "../types/trading";
 
 type KillSwitchState = {
@@ -15,6 +16,44 @@ type KillSwitchState = {
 };
 
 const BASE_URL = "/api/live";
+
+export type Candle = {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+};
+
+type CandleProvider = "api" | "csv";
+
+type FetchCandlesParams = {
+  symbol: string;
+  interval: Interval;
+  limit?: number;
+  provider?: CandleProvider;
+};
+
+export async function fetchSymbolCandles({
+  symbol,
+  interval,
+  limit = 500,
+  provider = "api",
+}: FetchCandlesParams): Promise<Candle[]> {
+  const params = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(limit),
+    provider,
+  });
+  const res = await fetch(`/api/candles?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch candles: ${res.status}`);
+  }
+  const payload = await res.json();
+  return Array.isArray(payload?.candles) ? (payload.candles as Candle[]) : [];
+}
 
 export async function fetchPaperStatus(): Promise<LiveStatus> {
   const res = await fetch(`${BASE_URL}/paper/status`);
@@ -116,11 +155,27 @@ export async function flattenPaperPosition(
   return res.json();
 }
 
+export type PaperTradeQuery = {
+  symbol?: string;
+  strategy?: string;
+  limit?: number;
+  offset?: number;
+};
+
 export async function fetchPaperTrades(
   limit = 100,
-  offset = 0
+  offset = 0,
+  filters: PaperTradeQuery = {}
 ): Promise<PaperTradeRecord[]> {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const params = new URLSearchParams();
+  params.set("limit", String(filters.limit ?? limit));
+  params.set("offset", String(filters.offset ?? offset));
+  if (filters.symbol) {
+    params.set("symbol", filters.symbol);
+  }
+  if (filters.strategy) {
+    params.set("strategy", filters.strategy);
+  }
   const res = await fetch(`/api/live/paper/trades?${params.toString()}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch paper trades: ${res.status}`);

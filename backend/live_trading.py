@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
@@ -319,6 +319,48 @@ def _deserialize_tags(raw: Any) -> Optional[Dict[str, Any]]:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _parse_db_timestamp(value: Any) -> Optional[datetime]:
+    """Best-effort conversion of DB timestamp representations to datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)):
+        ts_value = float(value)
+        if ts_value > 1_000_000_000_000:
+            ts_value /= 1000.0
+        try:
+            return datetime.fromtimestamp(ts_value)
+        except (OSError, OverflowError, ValueError):
+            return None
+    if isinstance(value, str):
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+        ):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    """Return a float if coercible, otherwise None."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/execution-mode", response_model=ExecutionModeResponse)
 async def get_execution_mode() -> ExecutionModeResponse:
     """Return the current execution routing mode for the live engine."""
@@ -467,30 +509,56 @@ async def reset_paper_equity(body: ResetEquityRequest) -> LiveStatus:
 
 
 @router.get("/paper/trades", response_model=List[PaperTradeRecord])
-async def get_paper_trades(limit: int = 100, offset: int = 0) -> List[PaperTradeRecord]:
-    """
-    Return recent paper trades (most recent first).
-    """
+async def get_paper_trades(
+    symbol: Optional[str] = None,
+    strategy: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> List[PaperTradeRecord]:
+    """Return recent paper trades (most recent first)."""
+
     safe_limit = max(1, min(limit, 1000))
     safe_offset = max(0, offset)
-    rows = list(fetch_recent_trades(limit=safe_limit, offset=safe_offset))
-    return [
-        PaperTradeRecord(
-            ts=row["ts"],
-            symbol=row["symbol"],
-            side=row["side"],
-            qty=row["qty"],
-            entry_price=row["entry_price"],
-            exit_price=row["exit_price"],
-            pnl=row["pnl"],
-            strategy_name=row["strategy_name"],
-            alpha_score=row["alpha_score"],
-            entry_signal_time=row["entry_signal_time"],
-            holding_minutes=row["holding_minutes"],
-            tags=_deserialize_tags(row["tags"]),
+    normalized_strategy = strategy.strip() if strategy else None
+    normalized_symbol = symbol.upper().strip() if symbol else None
+
+    rows = list(
+        fetch_recent_trades(
+            symbol=normalized_symbol,
+            strategy=normalized_strategy if normalized_strategy else None,
+            limit=safe_limit,
+            offset=safe_offset,
         )
-        for row in rows
-    ]
+    )
+
+    trades: List[PaperTradeRecord] = []
+    for row in rows:
+        exit_ts = _parse_db_timestamp(row["ts"]) or datetime.utcfromtimestamp(0)
+        entry_ts = _parse_db_timestamp(row["entry_signal_time"])
+        qty_value = float(row["qty"])
+
+        trades.append(
+            PaperTradeRecord(
+                id=int(row["id"]),
+                ts=exit_ts,
+                symbol=row["symbol"],
+                side=row["side"],
+                qty=qty_value,
+                quantity=qty_value,
+                entry_time=entry_ts,
+                exit_time=exit_ts,
+                entry_price=float(row["entry_price"]),
+                exit_price=_safe_float(row["exit_price"]),
+                pnl=float(row["pnl"]),
+                strategy_name=row["strategy_name"],
+                alpha_score=_safe_float(row["alpha_score"]),
+                entry_signal_time=row["entry_signal_time"],
+                holding_minutes=_safe_float(row["holding_minutes"]),
+                tags=_deserialize_tags(row["tags"]),
+            )
+        )
+
+    return trades
 
 
 @router.get("/paper/equity-history", response_model=List[EquitySnapshot])

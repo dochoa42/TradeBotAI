@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   LiveStatus,
   PlacePaperOrderRequest,
@@ -23,6 +23,7 @@ import {
   fetchPaperStrategies,
 } from "../api/liveTrading";
 import StrategyComparisonCard from "./StrategyComparisonCard";
+import LiveCandlesPanel from "./LiveCandlesPanel";
 import {
   ResponsiveContainer,
   LineChart,
@@ -85,6 +86,10 @@ export const LiveTradingPanel: React.FC = () => {
   const [fullHistory, setFullHistory] = useState<PaperTradeRecord[]>([]);
   const [fullHistoryLoading, setFullHistoryLoading] = useState(false);
   const [historyModalError, setHistoryModalError] = useState<string | null>(null);
+  const [selectedTradeId, setSelectedTradeId] = useState<number | string | null>(null);
+  const [flashTradeId, setFlashTradeId] = useState<number | string | null>(null);
+  const tradeRowRefs = useRef<Map<number | string, HTMLTableRowElement>>(new Map());
+  const selectionSourceRef = useRef<"chart" | "table" | null>(null);
 
   const equityChartData = useMemo(
     () =>
@@ -135,6 +140,42 @@ export const LiveTradingPanel: React.FC = () => {
       }),
     [tradeHistory, selectedSymbol, selectedStrategy]
   );
+
+  const resolvedChartSymbol = (
+    selectedSymbol === "ALL" ? symbol : selectedSymbol
+  ).toUpperCase();
+  const resolvedStrategyFilter =
+    selectedStrategy === "ALL" ? undefined : selectedStrategy;
+
+  useEffect(() => {
+    if (selectedTradeId == null) return;
+    if (!filteredTrades.some((trade) => trade.id === selectedTradeId)) {
+      setSelectedTradeId(null);
+    }
+  }, [filteredTrades, selectedTradeId]);
+
+  useEffect(() => {
+    if (selectedTradeId == null) return;
+    const row = tradeRowRefs.current.get(selectedTradeId);
+    if (!row) {
+      selectionSourceRef.current = null;
+      return;
+    }
+
+    if (selectionSourceRef.current !== "chart") {
+      selectionSourceRef.current = null;
+      return;
+    }
+
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashTradeId(selectedTradeId);
+    const timeoutId = window.setTimeout(() => {
+      setFlashTradeId((current) => (current === selectedTradeId ? null : current));
+    }, 1500);
+
+    selectionSourceRef.current = null;
+    return () => window.clearTimeout(timeoutId);
+  }, [selectedTradeId]);
 
   useEffect(() => {
     let active = true;
@@ -274,7 +315,17 @@ export const LiveTradingPanel: React.FC = () => {
     }
   }
 
-  const renderTradeTable = (rows: PaperTradeRecord[]) => (
+  const handleSelectTradeFromTable = (tradeId: number | string) => {
+    selectionSourceRef.current = "table";
+    setSelectedTradeId(tradeId);
+  };
+
+  const handleSelectTradeFromChart = (tradeId: number | string) => {
+    selectionSourceRef.current = "chart";
+    setSelectedTradeId(tradeId);
+  };
+
+  const renderTradeTable = (rows: PaperTradeRecord[], interactive = false) => (
     <div className="overflow-x-auto">
       <table className="min-w-full text-left text-xs">
         <thead className="border-b border-slate-700 text-slate-400">
@@ -291,17 +342,32 @@ export const LiveTradingPanel: React.FC = () => {
           </tr>
         </thead>
         <tbody>
-          {rows.map((t, idx) => {
+          {rows.map((t) => {
             const pnlClass =
               t.pnl > 0
                 ? "text-emerald-400"
                 : t.pnl < 0
                 ? "text-rose-400"
                 : "text-slate-100";
+            const isSelected = interactive && selectedTradeId === t.id;
+            const isFlashing = interactive && flashTradeId === t.id;
             return (
               <tr
-                key={`${t.ts}-${t.symbol}-${idx}`}
-                className="border-b border-slate-800/60 last:border-0"
+                key={t.id}
+                ref={(el) => {
+                  if (!interactive) return;
+                  if (!el) {
+                    tradeRowRefs.current.delete(t.id);
+                  } else {
+                    tradeRowRefs.current.set(t.id, el);
+                  }
+                }}
+                onClick={interactive ? () => handleSelectTradeFromTable(t.id) : undefined}
+                className={`border-b border-slate-800/60 last:border-0 ${
+                  interactive ? "cursor-pointer transition-colors duration-150 hover:bg-slate-800/40" : ""
+                } ${isSelected ? "bg-slate-800/50" : ""} ${
+                  isFlashing ? "ring-2 ring-indigo-500/60" : ""
+                }`}
               >
                 <td className="px-4 py-2 text-slate-400">
                   {new Date(t.ts).toLocaleString()}
@@ -312,9 +378,13 @@ export const LiveTradingPanel: React.FC = () => {
                   {t.alpha_score != null ? t.alpha_score.toFixed(2) : "-"}
                 </td>
                 <td className="px-4 py-2">{t.side}</td>
-                <td className="px-4 py-2 text-right">{t.qty.toFixed(4)}</td>
+                <td className="px-4 py-2 text-right">
+                  {(t.quantity ?? t.qty).toFixed(4)}
+                </td>
                 <td className="px-4 py-2 text-right">{t.entry_price.toFixed(2)}</td>
-                <td className="px-4 py-2 text-right">{t.exit_price.toFixed(2)}</td>
+                <td className="px-4 py-2 text-right">
+                  {formatNumber(t.exit_price)}
+                </td>
                 <td className={`px-4 py-2 text-right ${pnlClass}`}>
                   {t.pnl.toFixed(2)}
                 </td>
@@ -973,6 +1043,13 @@ export const LiveTradingPanel: React.FC = () => {
             )}
           </div>
 
+          <LiveCandlesPanel
+            symbol={resolvedChartSymbol}
+            strategy={resolvedStrategyFilter}
+            selectedTradeId={selectedTradeId}
+            onSelectTrade={handleSelectTradeFromChart}
+          />
+
           <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
             <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-300">
               <span>Trade History (Paper)</span>
@@ -999,7 +1076,7 @@ export const LiveTradingPanel: React.FC = () => {
                 No trades match the current filters.
               </div>
             ) : (
-              renderTradeTable(filteredTrades)
+              renderTradeTable(filteredTrades, true)
             )}
           </div>
 

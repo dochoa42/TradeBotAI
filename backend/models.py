@@ -9,7 +9,7 @@ except ImportError:  # pragma: no cover - allow running as script
     from indicators import IndicatorSpec  # type: ignore
 
 # Intervals your UI uses; map 1:1 to Binance
-Interval = Literal["1m", "5m", "1h", "1d"]
+Interval = Literal["1m", "5m", "15m", "1h", "4h", "1d"]
 
 class Candle(BaseModel):
     ts: int = Field(..., description="Unix ms")
@@ -250,12 +250,16 @@ class FlattenPaperPositionRequest(BaseModel):
 
 
 class PaperTradeRecord(BaseModel):
+    id: int
     ts: datetime
     symbol: str
     side: str
     qty: float
+    quantity: float
+    entry_time: Optional[datetime] = None
+    exit_time: Optional[datetime] = None
     entry_price: float
-    exit_price: float
+    exit_price: Optional[float] = None
     pnl: float
     strategy_name: Optional[str] = None
     alpha_score: Optional[float] = None

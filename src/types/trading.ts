@@ -115,12 +115,16 @@ export interface PlacePaperOrderRequest {
 // ============================
 
 export interface PaperTradeRecord {
+  id: number;
   ts: string; // ISO timestamp from backend
   symbol: string;
   side: string;
   qty: number;
+  quantity: number;
+  entry_time?: string | null;
+  exit_time?: string | null;
   entry_price: number;
-  exit_price: number;
+  exit_price?: number | null;
   pnl: number;
   strategy_name?: string | null;
   alpha_score?: number | null;

@@ -209,11 +209,30 @@ def count_equity_resets() -> int:
     return int(row[0]) if row is not None else 0
 
 
-def fetch_recent_trades(limit: int = 100, offset: int = 0) -> Iterable[Tuple]:
-    """Return most recent paper trades (latest first)."""
-    cur = _conn.execute(
+def fetch_recent_trades(
+    *,
+    symbol: Optional[str] = None,
+    strategy: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Iterable[sqlite3.Row]:
+    """Return most recent paper trades with optional filtering."""
+
+    clauses: List[str] = []
+    params: List[Any] = []
+
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol.upper())
+
+    if strategy:
+        clauses.append("strategy_name = ?")
+        params.append(strategy)
+
+    query = [
         """
         SELECT
+            id,
             ts,
             symbol,
             side,
@@ -227,11 +246,22 @@ def fetch_recent_trades(limit: int = 100, offset: int = 0) -> Iterable[Tuple]:
             holding_minutes,
             tags
         FROM paper_trades
-        ORDER BY id DESC
+        """
+    ]
+
+    if clauses:
+        query.append("WHERE " + " AND ".join(clauses))
+
+    query.append(
+        """
+        ORDER BY COALESCE(entry_signal_time, ts) DESC, id DESC
         LIMIT ? OFFSET ?
-        """,
-        (limit, offset),
+        """
     )
+
+    params.extend([limit, offset])
+
+    cur = _conn.execute(" ".join(query), tuple(params))
     return cur.fetchall()
 
 
