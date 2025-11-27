@@ -6,7 +6,9 @@ from typing import Final
 
 import httpx
 import pandas as pd
-from loguru import logger
+import logging
+
+logger = logging.getLogger("alpaca")
 
 try:
     from .config import (
