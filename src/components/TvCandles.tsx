@@ -68,6 +68,43 @@ type CandleSeriesWithMarkers = ISeriesApi<"Candlestick"> & {
   setMarkers(markers: SeriesMarker<Time>[]): void;
 };
 
+type NumericTimeCandle<T extends { time: any }> = T & { _tvTime: number };
+
+function normalizeCandlesByTime<T extends { time: any }>(
+  candles: T[] | undefined | null,
+): NumericTimeCandle<T>[] {
+  if (!candles || candles.length === 0) return [];
+
+  const withNumeric: NumericTimeCandle<T>[] = candles
+    .map((c) => {
+      const ts = tsToSeconds(c as any);
+      if (ts == null || !Number.isFinite(ts as number)) return null;
+      return { ...(c as any), _tvTime: Number(ts) } as NumericTimeCandle<T>;
+    })
+    .filter((c): c is NumericTimeCandle<T> => !!c);
+
+  if (withNumeric.length === 0) return [];
+
+  withNumeric.sort((a, b) => a._tvTime - b._tvTime);
+
+  const deduped: NumericTimeCandle<T>[] = [];
+  for (const c of withNumeric) {
+    const last = deduped[deduped.length - 1];
+    if (!last || c._tvTime > last._tvTime) {
+      deduped.push(c);
+    } else if (c._tvTime === last._tvTime) {
+      deduped[deduped.length - 1] = c;
+    } else {
+      console.warn("TvCandles: non-ascending time detected after sort", {
+        prev: last._tvTime,
+        current: c._tvTime,
+      });
+    }
+  }
+
+  return deduped;
+}
+
 // --- helpers ---------------------------------------------------------
 
 function tsToSeconds(point: {
@@ -98,57 +135,6 @@ function tsToSeconds(point: {
 }
 
 const baseContainerClass = "w-full h-full min-h-[320px]";
-
-function prepareSeriesData(candles: TvCandleData[]): BarData[] {
-  if (!Array.isArray(candles) || !candles.length) {
-    return [];
-  }
-
-  const cleaned = candles
-    .map((c) => {
-      const time = tsToSeconds(c);
-      const open = Number(c.open);
-      const high = Number(c.high);
-      const low = Number(c.low);
-      const close = Number(c.close);
-
-      if (
-        time == null ||
-        !Number.isFinite(open) ||
-        !Number.isFinite(high) ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(close)
-      ) {
-        return null;
-      }
-
-      return {
-        time: time as UTCTimestamp,
-        open,
-        high,
-        low,
-        close,
-      } as BarData;
-    })
-    .filter((v): v is BarData => Boolean(v))
-    .sort((a, b) => (a.time as number) - (b.time as number));
-
-  if (!cleaned.length) {
-    return [];
-  }
-
-  const deduped: BarData[] = [];
-  cleaned.forEach((bar) => {
-    const last = deduped[deduped.length - 1];
-    if (last && last.time === bar.time) {
-      deduped[deduped.length - 1] = bar;
-    } else {
-      deduped.push(bar);
-    }
-  });
-
-  return deduped;
-}
 
 // --- component -------------------------------------------------------
 
@@ -231,17 +217,66 @@ const TvCandles: React.FC<TvCandlesProps> = ({
 
   // 2) push REAL candles whenever data changes
   useEffect(() => {
-    if (!seriesRef.current) return;
+    const series = seriesRef.current;
+    if (!series) return;
 
-    const prepared = prepareSeriesData(data ?? []);
+    const normalized = normalizeCandlesByTime(data);
+
+    if (!normalized.length) {
+      try {
+        series.setData([]);
+      } catch (err) {
+        console.error("TvCandles: failed to clear series", err);
+      }
+      return;
+    }
+
+    const tvData = normalized
+      .map((c) => {
+        const open = Number((c as any).open);
+        const high = Number((c as any).high);
+        const low = Number((c as any).low);
+        const close = Number((c as any).close);
+
+        if (
+          !Number.isFinite(open) ||
+          !Number.isFinite(high) ||
+          !Number.isFinite(low) ||
+          !Number.isFinite(close)
+        ) {
+          return null;
+        }
+
+        return {
+          time: c._tvTime as UTCTimestamp,
+          open,
+          high,
+          low,
+          close,
+        } as BarData;
+      })
+      .filter((bar): bar is BarData => !!bar);
+
+    if (!tvData.length) {
+      try {
+        series.setData([]);
+      } catch (err) {
+        console.error("TvCandles: failed to clear series after filtering", err);
+      }
+      return;
+    }
 
     try {
-      seriesRef.current.setData(prepared);
-      if (prepared.length && chartRef.current) {
+      series.setData(tvData);
+      if (chartRef.current) {
         chartRef.current.timeScale().fitContent();
       }
-    } catch (error) {
-      console.error("TvCandles setData error", error);
+    } catch (err) {
+      console.error(
+        "TvCandles: setData failed (likely non-ascending times)",
+        err,
+        tvData.slice(0, 5),
+      );
     }
   }, [data]);
 
