@@ -95,6 +95,7 @@ export interface LiveStatus {
   daily_loss_limit?: number | null;
   max_position_size?: number | null;
   max_open_positions?: number | null;
+  resets_count?: number | null;
 }
 
 export interface PlacePaperOrderRequest {

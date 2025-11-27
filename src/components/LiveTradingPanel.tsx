@@ -19,6 +19,8 @@ import {
   fetchPaperSummary,
   fetchExecutionMode,
   fetchStrategyPerformance,
+  resetPaperEquity,
+  fetchPaperStrategies,
 } from "../api/liveTrading";
 import StrategyComparisonCard from "./StrategyComparisonCard";
 import {
@@ -77,6 +79,12 @@ export const LiveTradingPanel: React.FC = () => {
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("paper");
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformanceRow[]>([]);
   const [strategyPerfLoading, setStrategyPerfLoading] = useState(false);
+  const [availableStrategies, setAvailableStrategies] = useState<string[]>([]);
+  const [resettingEquity, setResettingEquity] = useState(false);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [fullHistory, setFullHistory] = useState<PaperTradeRecord[]>([]);
+  const [fullHistoryLoading, setFullHistoryLoading] = useState(false);
+  const [historyModalError, setHistoryModalError] = useState<string | null>(null);
 
   const equityChartData = useMemo(
     () =>
@@ -223,6 +231,31 @@ export const LiveTradingPanel: React.FC = () => {
   }, [selectedSymbol, selectedStrategy]);
 
   useEffect(() => {
+    let active = true;
+
+    async function loadStrategies() {
+      try {
+        const symbolFilter = symbol.trim();
+        const rows = await fetchPaperStrategies(
+          symbolFilter ? symbolFilter.toUpperCase() : undefined
+        );
+        if (active) {
+          setAvailableStrategies(rows);
+        }
+      } catch (err) {
+        if (active) {
+          setAvailableStrategies([]);
+        }
+      }
+    }
+
+    loadStrategies();
+    return () => {
+      active = false;
+    };
+  }, [symbol]);
+
+  useEffect(() => {
     if (orderType === "market") {
       setPrice(undefined);
     }
@@ -240,6 +273,58 @@ export const LiveTradingPanel: React.FC = () => {
       // Ignore history refresh errors for now; status polling will retry later.
     }
   }
+
+  const renderTradeTable = (rows: PaperTradeRecord[]) => (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-left text-xs">
+        <thead className="border-b border-slate-700 text-slate-400">
+          <tr>
+            <th className="px-4 py-2">Time</th>
+            <th className="px-4 py-2">Symbol</th>
+            <th className="px-4 py-2">Strategy</th>
+            <th className="px-4 py-2 text-right">Alpha</th>
+            <th className="px-4 py-2">Side</th>
+            <th className="px-4 py-2 text-right">Qty</th>
+            <th className="px-4 py-2 text-right">Entry</th>
+            <th className="px-4 py-2 text-right">Exit</th>
+            <th className="px-4 py-2 text-right">PnL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t, idx) => {
+            const pnlClass =
+              t.pnl > 0
+                ? "text-emerald-400"
+                : t.pnl < 0
+                ? "text-rose-400"
+                : "text-slate-100";
+            return (
+              <tr
+                key={`${t.ts}-${t.symbol}-${idx}`}
+                className="border-b border-slate-800/60 last:border-0"
+              >
+                <td className="px-4 py-2 text-slate-400">
+                  {new Date(t.ts).toLocaleString()}
+                </td>
+                <td className="px-4 py-2">{t.symbol}</td>
+                <td className="px-4 py-2">{t.strategy_name ?? "-"}</td>
+                <td className="px-4 py-2 text-right">
+                  {t.alpha_score != null ? t.alpha_score.toFixed(2) : "-"}
+                </td>
+                <td className="px-4 py-2">{t.side}</td>
+                <td className="px-4 py-2 text-right">{t.qty.toFixed(4)}</td>
+                <td className="px-4 py-2 text-right">{t.entry_price.toFixed(2)}</td>
+                <td className="px-4 py-2 text-right">{t.exit_price.toFixed(2)}</td>
+                <td className={`px-4 py-2 text-right ${pnlClass}`}>
+                  {t.pnl.toFixed(2)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 
   async function handlePlaceOrder(e: React.FormEvent) {
     e.preventDefault();
@@ -326,6 +411,63 @@ export const LiveTradingPanel: React.FC = () => {
     }
   }
 
+  async function handleResetEquity() {
+    if (!status || status.mode !== "paper" || resettingEquity) {
+      return;
+    }
+    const defaultEquity = Number.isFinite(status.equity)
+      ? status.equity
+      : 2000;
+    const defaultPromptValue = Number.isFinite(defaultEquity)
+      ? defaultEquity.toString()
+      : "2000";
+    const raw = window.prompt(
+      "Enter a new starting equity value",
+      defaultPromptValue
+    );
+    if (raw === null) {
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setError("Invalid equity amount");
+      return;
+    }
+
+    try {
+      setResettingEquity(true);
+      const updated = await resetPaperEquity({
+        target_equity: parsed,
+        note: "manual reset from UI",
+      });
+      setStatus(updated);
+      await refreshHistory();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setResettingEquity(false);
+    }
+  }
+
+  async function handleOpenFullHistory() {
+    setHistoryModalOpen(true);
+    setHistoryModalError(null);
+    setFullHistoryLoading(true);
+    try {
+      const rows = await fetchPaperTrades(500, 0);
+      setFullHistory(rows);
+    } catch (err) {
+      setHistoryModalError((err as Error).message);
+      setFullHistory([]);
+    } finally {
+      setFullHistoryLoading(false);
+    }
+  }
+
+  function handleCloseHistoryModal() {
+    setHistoryModalOpen(false);
+  }
+
   const netPnlDisplay = summary ? formatNumber(summary.net_pnl) : "-";
   const netPnlClass = summary ? formatPnlClass(summary.net_pnl) : "text-slate-200";
   const winRateDisplay = summary ? formatPercent(summary.win_rate) : "-";
@@ -393,6 +535,25 @@ export const LiveTradingPanel: React.FC = () => {
             <span className={`text-sm font-semibold ${formatPnlClass(status.daily_pnl)}`}>
               Daily PnL: {formatNumber(status.daily_pnl)}
             </span>
+            {status.mode === "paper" && (
+              <button
+                type="button"
+                onClick={handleResetEquity}
+                disabled={resettingEquity}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-colors ${
+                  resettingEquity
+                    ? "bg-slate-800 text-slate-500 border-slate-700"
+                    : "bg-slate-900 text-slate-200 border-slate-600 hover:bg-slate-800"
+                }`}
+              >
+                {resettingEquity ? "Resetting..." : "Reset equity"}
+              </button>
+            )}
+            {typeof status.resets_count === "number" && (
+              <span className="text-xs text-slate-400">
+                Session resets: {status.resets_count}
+              </span>
+            )}
             {status.kill_switch_tripped ? (
               <span className="px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-300 border border-rose-500/30">
                 Kill Switch: {status.kill_switch_reason || "tripped"}
@@ -518,7 +679,7 @@ export const LiveTradingPanel: React.FC = () => {
                   />
                 </label>
                 <label className="flex flex-col text-sm text-slate-200">
-                  Strategy
+                  <span>Strategy</span>
                   <input
                     type="text"
                     value={strategyName}
@@ -526,6 +687,27 @@ export const LiveTradingPanel: React.FC = () => {
                     placeholder="e.g. Mean Revert"
                     className="mt-1 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-50 focus:border-emerald-400 focus:outline-none"
                   />
+                  {availableStrategies.length > 0 && (
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (!next) {
+                          return;
+                        }
+                        setStrategyName(next);
+                        e.currentTarget.value = "";
+                      }}
+                      className="mt-2 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300"
+                    >
+                      <option value="">Select saved strategy</option>
+                      {availableStrategies.map((strategy) => (
+                        <option key={strategy} value={strategy}>
+                          {strategy}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </label>
                 <label className="flex flex-col text-sm text-slate-200">
                   Alpha Score
@@ -794,11 +976,21 @@ export const LiveTradingPanel: React.FC = () => {
           <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
             <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-300">
               <span>Trade History (Paper)</span>
-              <span className="text-[11px] text-slate-500">
-                {filteredTrades.length === tradeHistory.length
-                  ? `Showing ${filteredTrades.length} trades`
-                  : `Showing ${filteredTrades.length} / ${tradeHistory.length} trades`}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-slate-500">
+                  {filteredTrades.length === tradeHistory.length
+                    ? `Showing ${filteredTrades.length} trades`
+                    : `Showing ${filteredTrades.length} / ${tradeHistory.length} trades`}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleOpenFullHistory}
+                  className="rounded-lg border border-slate-600 px-3 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+                  disabled={tradeHistory.length === 0}
+                >
+                  View full history
+                </button>
+              </div>
             </div>
             {tradeHistory.length === 0 ? (
               <div className="text-xs text-slate-500">No paper trades recorded yet.</div>
@@ -807,55 +999,7 @@ export const LiveTradingPanel: React.FC = () => {
                 No trades match the current filters.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-xs">
-                  <thead className="border-b border-slate-700 text-slate-400">
-                    <tr>
-                      <th className="px-4 py-2">Time</th>
-                      <th className="px-4 py-2">Symbol</th>
-                      <th className="px-4 py-2">Strategy</th>
-                      <th className="px-4 py-2 text-right">Alpha</th>
-                      <th className="px-4 py-2">Side</th>
-                      <th className="px-4 py-2 text-right">Qty</th>
-                      <th className="px-4 py-2 text-right">Entry</th>
-                      <th className="px-4 py-2 text-right">Exit</th>
-                      <th className="px-4 py-2 text-right">PnL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredTrades.map((t, idx) => {
-                      const pnlClass =
-                        t.pnl > 0
-                          ? "text-emerald-400"
-                          : t.pnl < 0
-                          ? "text-rose-400"
-                          : "text-slate-100";
-                      return (
-                        <tr
-                          key={`${t.ts}-${t.symbol}-${idx}`}
-                          className="border-b border-slate-800/60 last:border-0"
-                        >
-                          <td className="px-4 py-2 text-slate-400">
-                            {new Date(t.ts).toLocaleString()}
-                          </td>
-                          <td className="px-4 py-2">{t.symbol}</td>
-                          <td className="px-4 py-2">{t.strategy_name ?? "-"}</td>
-                          <td className="px-4 py-2 text-right">
-                            {t.alpha_score != null ? t.alpha_score.toFixed(2) : "-"}
-                          </td>
-                          <td className="px-4 py-2">{t.side}</td>
-                          <td className="px-4 py-2 text-right">{t.qty.toFixed(4)}</td>
-                          <td className="px-4 py-2 text-right">{t.entry_price.toFixed(2)}</td>
-                          <td className="px-4 py-2 text-right">{t.exit_price.toFixed(2)}</td>
-                          <td className={`px-4 py-2 text-right ${pnlClass}`}>
-                            {t.pnl.toFixed(2)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              renderTradeTable(filteredTrades)
             )}
           </div>
 
@@ -921,6 +1065,51 @@ export const LiveTradingPanel: React.FC = () => {
             symbols={symbolOptions.filter((sym) => sym !== "ALL")}
           />
         </>
+      )}
+      {historyModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={handleCloseHistoryModal}
+        >
+          <div
+            className="w-full max-w-5xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-start justify-between">
+              <div>
+                <h4 className="text-lg font-semibold text-slate-100">
+                  Full Paper Trade History
+                </h4>
+                <p className="text-xs text-slate-400">
+                  Showing up to the 500 most recent paper trades from SQLite.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseHistoryModal}
+                className="rounded-md border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+            {historyModalError && (
+              <div className="mb-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                {historyModalError}
+              </div>
+            )}
+            {fullHistoryLoading ? (
+              <div className="text-sm text-slate-400">Loading full history...</div>
+            ) : fullHistory.length === 0 ? (
+              <div className="text-sm text-slate-400">
+                No paper trades recorded yet.
+              </div>
+            ) : (
+              <div className="max-h-[60vh] overflow-y-auto pr-2">
+                {renderTradeTable(fullHistory)}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

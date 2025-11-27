@@ -44,6 +44,14 @@ _conn.executescript(
         daily_pnl REAL NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS equity_resets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        old_equity REAL NOT NULL,
+        new_equity REAL NOT NULL,
+        note TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS backtest_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         created_at INTEGER NOT NULL,
@@ -168,7 +176,40 @@ def record_equity_snapshot(equity: float, daily_pnl: float) -> None:
     _conn.commit()
 
 
-def fetch_recent_trades(limit: int = 100) -> Iterable[Tuple]:
+def get_last_equity_snapshot() -> Optional[float]:
+    """Return the most recent persisted equity value, if any."""
+    cur = _conn.execute(
+        "SELECT equity FROM paper_equity ORDER BY id DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    return float(row[0]) if row is not None else None
+
+
+def record_equity_reset(
+    old_equity: float,
+    new_equity: float,
+    note: Optional[str] = None,
+) -> None:
+    """Persist a ledger entry describing an equity reset."""
+    normalized_note = note.strip() if note else None
+    _conn.execute(
+        """
+        INSERT INTO equity_resets (ts, old_equity, new_equity, note)
+        VALUES (?, ?, ?, ?)
+        """,
+        (int(time.time()), float(old_equity), float(new_equity), normalized_note),
+    )
+    _conn.commit()
+
+
+def count_equity_resets() -> int:
+    """Return total number of recorded equity reset events."""
+    cur = _conn.execute("SELECT COUNT(1) FROM equity_resets")
+    row = cur.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def fetch_recent_trades(limit: int = 100, offset: int = 0) -> Iterable[Tuple]:
     """Return most recent paper trades (latest first)."""
     cur = _conn.execute(
         """
@@ -187,9 +228,9 @@ def fetch_recent_trades(limit: int = 100) -> Iterable[Tuple]:
             tags
         FROM paper_trades
         ORDER BY id DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        (limit,),
+        (limit, offset),
     )
     return cur.fetchall()
 
@@ -381,6 +422,27 @@ def fetch_strategy_performance(symbol: Optional[str] = None) -> List[StrategyPer
         )
 
     return results
+
+
+def list_paper_strategies(symbol: Optional[str] = None) -> List[str]:
+    """Return distinct non-empty strategy names, optionally filtered by symbol."""
+
+    query = [
+        """
+        SELECT DISTINCT strategy_name
+        FROM paper_trades
+        WHERE strategy_name IS NOT NULL AND TRIM(strategy_name) <> ''
+        """
+    ]
+    params: List[Any] = []
+
+    if symbol:
+        query.append("AND symbol = ?")
+        params.append(symbol.upper())
+
+    query.append("ORDER BY strategy_name ASC")
+    rows = _conn.execute(" ".join(query), tuple(params)).fetchall()
+    return [row[0] for row in rows if row[0]]
 
 
 def _normalize_strategy_name(strategy_name: Optional[str]) -> str:

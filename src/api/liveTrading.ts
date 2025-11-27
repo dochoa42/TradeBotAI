@@ -58,6 +58,25 @@ export async function cancelPaperOrder(orderId: string): Promise<LiveStatus> {
   return res.json();
 }
 
+export type ResetPaperEquityBody = {
+  target_equity?: number;
+  note?: string;
+};
+
+export async function resetPaperEquity(
+  body: ResetPaperEquityBody = {}
+): Promise<LiveStatus> {
+  const res = await fetch(`${BASE_URL}/paper/reset-equity`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to reset paper equity: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchKillSwitch(): Promise<KillSwitchState> {
   const res = await fetch(`${BASE_URL}/paper/kill-switch`);
   if (!res.ok) {
@@ -98,9 +117,11 @@ export async function flattenPaperPosition(
 }
 
 export async function fetchPaperTrades(
-  limit = 100
+  limit = 100,
+  offset = 0
 ): Promise<PaperTradeRecord[]> {
-  const res = await fetch(`/api/live/paper/trades?limit=${limit}`);
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const res = await fetch(`/api/live/paper/trades?${params.toString()}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch paper trades: ${res.status}`);
   }
@@ -161,6 +182,24 @@ export async function fetchStrategyPerformance(
     throw new Error("Failed to fetch strategy performance");
   }
   return res.json();
+}
+
+export async function fetchPaperStrategies(symbol?: string): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (symbol && symbol.trim().length > 0) {
+    params.set("symbol", symbol.trim());
+  }
+  const qs = params.toString();
+  const res = await fetch(
+    `${BASE_URL}/paper/strategies${qs ? `?${qs}` : ""}`
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch paper strategies");
+  }
+  const payload = await res.json();
+  return Array.isArray(payload?.strategies)
+    ? (payload.strategies as string[])
+    : [];
 }
 
 export type StrategyComparisonParams = {

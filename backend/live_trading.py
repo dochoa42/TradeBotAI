@@ -56,6 +56,10 @@ from storage import (
     fetch_strategy_performance,
     get_latest_backtest_for_strategy,
     fetch_latest_backtest_runs,
+    record_equity_reset,
+    get_last_equity_snapshot,
+    count_equity_resets,
+    list_paper_strategies,
 )
 
 router = APIRouter(prefix="/api/live", tags=["live"])
@@ -67,11 +71,22 @@ _ = STUB_BROKER_CLIENT
 # Actual live trading will be wired later and gated by risk.LIVE_TRADING_ENABLED.
 CURRENT_MODE: TradingMode = "paper"
 CURRENT_EXECUTION_MODE: ExecutionMode = ExecutionMode.PAPER
-_paper_equity: float = 2000.0
+STARTING_EQUITY = 2000.0
+
+
+def _load_starting_equity() -> float:
+    restored = get_last_equity_snapshot()
+    if restored is not None:
+        return restored
+    return STARTING_EQUITY
+
+
+_paper_equity: float = _load_starting_equity()
 _paper_start_of_day_equity: float = _paper_equity
 _paper_positions: Dict[str, LivePosition] = {}
 _paper_orders: Dict[str, LiveOrder] = {}
 _current_day: date = date.today()
+_paper_resets_count: int = count_equity_resets()
 
 
 def _current_unix_ms() -> int:
@@ -209,6 +224,7 @@ def _status() -> LiveStatus:
         daily_loss_limit=RISK_CONFIG.max_daily_loss,
         max_position_size=RISK_CONFIG.max_position_size,
         max_open_positions=RISK_CONFIG.max_open_positions,
+        resets_count=_paper_resets_count,
     )
     record_equity_snapshot(status.equity, status.daily_pnl)
     return status
@@ -400,6 +416,11 @@ class KillSwitchToggleRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class ResetEquityRequest(BaseModel):
+    target_equity: Optional[float] = None
+    note: Optional[str] = None
+
+
 @router.post("/paper/kill-switch", response_model=KillSwitchState)
 async def set_paper_kill_switch_state(body: KillSwitchToggleRequest) -> KillSwitchState:
     """Manually toggle the kill switch from the UI (Phase 10.2)."""
@@ -424,12 +445,35 @@ async def flatten_paper_position(req: FlattenPaperPositionRequest) -> LiveStatus
     return _status()
 
 
+@router.post("/paper/reset-equity", response_model=LiveStatus)
+async def reset_paper_equity(body: ResetEquityRequest) -> LiveStatus:
+    """Reset the paper equity baseline and log the operation."""
+
+    global _paper_equity, _paper_start_of_day_equity, _paper_resets_count
+
+    old_equity = _paper_equity
+    requested = body.target_equity if body.target_equity is not None else STARTING_EQUITY
+    next_equity = requested if requested > 0 else STARTING_EQUITY
+
+    _paper_equity = float(next_equity)
+    _paper_start_of_day_equity = _paper_equity
+
+    note = body.note.strip() if body.note else None
+    record_equity_reset(old_equity, _paper_equity, note)
+    _paper_resets_count += 1
+
+    record_equity_snapshot(_paper_equity, 0.0)
+    return _status()
+
+
 @router.get("/paper/trades", response_model=List[PaperTradeRecord])
-async def get_paper_trades(limit: int = 100) -> List[PaperTradeRecord]:
+async def get_paper_trades(limit: int = 100, offset: int = 0) -> List[PaperTradeRecord]:
     """
     Return recent paper trades (most recent first).
     """
-    rows = list(fetch_recent_trades(limit=limit))
+    safe_limit = max(1, min(limit, 1000))
+    safe_offset = max(0, offset)
+    rows = list(fetch_recent_trades(limit=safe_limit, offset=safe_offset))
     return [
         PaperTradeRecord(
             ts=row["ts"],
@@ -463,6 +507,14 @@ async def get_paper_equity_history(limit: int = 200) -> List[EquitySnapshot]:
         )
         for row in rows
     ]
+
+
+@router.get("/paper/strategies")
+async def get_paper_strategies(symbol: Optional[str] = None) -> Dict[str, List[str]]:
+    """Return distinct strategy names observed in paper trades."""
+
+    strategies = list_paper_strategies(symbol)
+    return {"strategies": strategies}
 
 
 def _summarize_trades(

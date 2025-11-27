@@ -224,6 +224,7 @@ class LiveStatus(BaseModel):
     daily_loss_limit: Optional[float] = None
     max_position_size: Optional[float] = None
     max_open_positions: Optional[int] = None
+    resets_count: Optional[int] = None
 
 
 class PlacePaperOrderRequest(BaseModel):
