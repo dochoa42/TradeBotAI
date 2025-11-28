@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from typing import Any, Dict, List, Literal, Optional
 
 try:
@@ -13,12 +13,20 @@ Interval = Literal["1m", "5m", "15m", "1h", "4h", "1d"]
 DataProvider = Literal["csv", "api", "alpaca"]
 
 class Candle(BaseModel):
-    ts: int = Field(..., description="Unix ms")
+    time: int = Field(..., description="Unix ms")
     open: float
     high: float
     low: float
     close: float
     volume: float
+
+    @root_validator(pre=True)
+    def _alias_ts(cls, values: dict) -> dict:
+        """Accept legacy payloads that still use 'ts' instead of 'time'."""
+
+        if "time" not in values and "ts" in values:
+            values["time"] = values["ts"]
+        return values
 
 class CandleResponse(BaseModel):
     symbol: str
@@ -328,4 +336,3 @@ class StrategyDefinition(StrategyDefinitionIn):
     id: int
     created_at: datetime
     updated_at: datetime
-

@@ -19,7 +19,7 @@ type KillSwitchState = {
 const BASE_URL = "/api/live";
 
 export type Candle = {
-  ts: number;
+  time: number;
   open: number;
   high: number;
   low: number;
@@ -53,7 +53,15 @@ export async function fetchSymbolCandles({
     throw new Error(`Failed to fetch candles: ${res.status}`);
   }
   const payload = await res.json();
-  return Array.isArray(payload?.candles) ? (payload.candles as Candle[]) : [];
+  const candles = Array.isArray(payload?.candles) ? payload.candles : [];
+  return candles.map((row: any) => ({
+    time: Number(row?.time ?? row?.ts ?? 0),
+    open: Number(row?.open ?? 0),
+    high: Number(row?.high ?? 0),
+    low: Number(row?.low ?? 0),
+    close: Number(row?.close ?? 0),
+    volume: Number(row?.volume ?? 0),
+  }));
 }
 
 export async function fetchPaperStatus(): Promise<LiveStatus> {

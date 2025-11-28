@@ -37,6 +37,11 @@ from binance_client import fetch_klines
 from alpaca_client import fetch_alpaca_bars
 from model_service import predict_signals_from_candles
 from backtest import bollinger_backtest, load_candles_dataframe
+from candle_adapters import (
+    from_alpaca_bars,
+    from_binance_klines,
+    from_csv_rows,
+)
 from data_providers import CandleProvider, CsvCandleProvider
 from live_trading import router as live_router
 from strategy_library import router as strategy_library_router
@@ -259,6 +264,9 @@ async def get_candles(
     s = _normalize_symbol(symbol, provider)
     _validate_symbol(s, provider)
 
+    records: List[Candle] = []
+    note: Optional[str] = None
+
     # provider = 'csv' -> read from backend/data/{symbol}_{interval}.csv
     if provider == "csv":
         data_dir = Path(__file__).parent / "data"
@@ -282,17 +290,13 @@ async def get_candles(
             ) from exc
 
         if df.empty:
-            return CandleResponse(
-                symbol=s,
-                interval=interval,
-                count=0,
-                candles=[],
-                note="No data found in CSV history for the given parameters.",
-            )
-
-        if limit > 0:
-            df = df.tail(limit)
-        df = df.sort_values("ts")
+            note = "No data found in CSV history for the given parameters."
+            records = []
+        else:
+            if limit > 0:
+                df = df.tail(limit)
+            df = df.sort_values("ts")
+            records = from_csv_rows(df)
     elif provider == "alpaca":
         try:
             df = await fetch_alpaca_bars(s, interval, limit=limit)
@@ -310,13 +314,8 @@ async def get_candles(
             ) from exc
 
         if df.empty:
-            return CandleResponse(
-                symbol=s,
-                interval=interval,
-                count=0,
-                candles=[],
-                note="Alpaca returned no bars for the requested symbol/interval.",
-            )
+            note = "Alpaca returned no bars for the requested symbol/interval."
+        records = from_alpaca_bars(df if not df.empty else pd.DataFrame())
     else:
         # provider = 'api' -> existing Binance flow
         try:
@@ -329,21 +328,9 @@ async def get_candles(
                 detail=f"Binance fetch failed: {exc}",
             ) from exc
 
-    records = [
-        Candle(
-            ts=int(pd.to_datetime(row.ts).value // 1_000_000),
-            open=float(row.open),
-            high=float(row.high),
-            low=float(row.low),
-            close=float(row.close),
-            volume=float(row.volume),
-        )
-        for row in df.itertuples(index=False)
-    ]
-
-    note: Optional[str] = None
-    if not records:
-        note = "No data returned for the given parameters."
+        records = from_binance_klines(df if not df.empty else pd.DataFrame())
+        if df.empty:
+            note = "No data returned for the given parameters."
 
     return CandleResponse(
         symbol=s,
@@ -557,7 +544,7 @@ async def model_predict(req: ModelPredictRequest) -> ModelPredictResponse:
         {
           "symbol": "BTCUSDT",
           "interval": "1m",
-          "candles": [ { "ts": ..., "open": ..., ... }, ... ],
+          "candles": [ { "time": ..., "open": ..., ... }, ... ],
           "params": { "threshold": 0.0015, "horizon": 5 }  # optional
         }
     """
@@ -566,6 +553,8 @@ async def model_predict(req: ModelPredictRequest) -> ModelPredictResponse:
 
     # Convert candles to DataFrame
     df = pd.DataFrame([c.dict() for c in req.candles])
+    if "ts" not in df.columns and "time" in df.columns:
+        df = df.rename(columns={"time": "ts"})
 
     # Let the model service handle feature building + prediction
     params_override = req.params.dict() if req.params else None

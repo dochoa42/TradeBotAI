@@ -115,7 +115,7 @@ const LiveCandlesPanel: React.FC<LiveCandlesPanelProps> = ({
         if (cancelled) return;
         setCandles(
           candleRows.map((row) => ({
-            time: row.ts,
+            time: row.time,
             open: row.open,
             high: row.high,
             low: row.low,

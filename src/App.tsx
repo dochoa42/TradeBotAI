@@ -39,8 +39,8 @@ type StrategyPreset = {
   indicators: IndicatorSpecClient[];
 };
 
-type Candle = {
-  ts: number;
+type BackendCandle = {
+  time: number;
   open: number;
   high: number;
   low: number;
@@ -184,11 +184,6 @@ const VIEW_TITLES: Record<AppView, string> = {
 // Utilities
 // =============================================
 
-function fmtTime(ts: number) {
-  const d = new Date(ts);
-  return d.toLocaleString();
-}
-
 function sma(values: number[], period: number): number[] {
   const out: number[] = new Array(values.length).fill(NaN);
   if (period <= 1) return values.slice();
@@ -241,8 +236,21 @@ function stddev(values: number[], period: number, means: number[]): number[] {
   return out;
 }
 
+function mapBackendCandleToChartPoint(candle: BackendCandle) {
+  const timeMs = Number(candle.time);
+  return {
+    ts: timeMs,
+    time: Math.floor(timeMs / 1000),
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  };
+}
+
 function computeChartPoints(
-  candles: Candle[],
+  candles: BackendCandle[],
   period: number,
   bandStd: number
 ): ChartPoint[] {
@@ -254,19 +262,16 @@ function computeChartPoints(
   const upper = sd.map((v, i) => (isFinite(v) ? sm[i] + bandStd * v : NaN));
   const lower = sd.map((v, i) => (isFinite(v) ? sm[i] - bandStd * v : NaN));
 
-  return candles.map((c, i) => ({
-    ts: c.ts,
-    time: fmtTime(c.ts),
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-    volume: c.volume,
-    sma: sm[i],
-    ema: em[i],
-    bbU: upper[i],
-    bbL: lower[i],
-  }));
+  return candles.map((c, i) => {
+    const base = mapBackendCandleToChartPoint(c);
+    return {
+      ...base,
+      sma: sm[i],
+      ema: em[i],
+      bbU: upper[i],
+      bbL: lower[i],
+    };
+  });
 }
 
 function buildOverlays(
@@ -336,7 +341,7 @@ async function fetchCandlesFromBackend(
   interval: Interval,
   limit = 500,
   provider: DataProvider = "api"
-): Promise<Candle[]> {
+): Promise<BackendCandle[]> {
   const normalizedSymbol =
     provider === "alpaca" ? symbol.toUpperCase() : symbol;
   const url = `${API_BASE}/api/candles?symbol=${encodeURIComponent(
@@ -348,21 +353,29 @@ async function fetchCandlesFromBackend(
     throw new Error(`Backend error ${r.status}: ${t}`);
   }
   const data = await r.json();
-  return (data?.candles || []) as Candle[];
+  const candles = Array.isArray(data?.candles) ? data.candles : [];
+  return candles.map((row: any) => ({
+    time: Number(row?.time ?? row?.ts ?? 0),
+    open: Number(row?.open ?? 0),
+    high: Number(row?.high ?? 0),
+    low: Number(row?.low ?? 0),
+    close: Number(row?.close ?? 0),
+    volume: Number(row?.volume ?? 0),
+  }));
 }
 
-function buildDemoCandles(n = 200): Candle[] {
-  const out: Candle[] = [];
+function buildDemoCandles(n = 200): BackendCandle[] {
+  const out: BackendCandle[] = [];
   const now = Date.now();
   for (let i = 0; i < n; i++) {
-    const ts = now - (n - i) * 60_000;
+    const time = now - (n - i) * 60_000;
     const base = 60000 + Math.sin(i / 10) * 200;
     const open = base + (i % 2 === 0 ? 5 : -5);
     const close = base + (i % 2 === 0 ? 10 : -10);
     const high = Math.max(open, close) + 30;
     const low = Math.min(open, close) - 30;
     const volume = 1_000 + (i % 5) * 100;
-    out.push({ ts, open, high, low, close, volume });
+    out.push({ time, open, high, low, close, volume });
   }
   return out;
 }
@@ -430,7 +443,7 @@ export default function App() {
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
   // Candles
-  const [candles, setCandles] = useState<Candle[]>([]);
+  const [candles, setCandles] = useState<BackendCandle[]>([]);
   const [loadingCandles, setLoadingCandles] = useState<boolean>(false);
   const [candlesError, setCandlesError] = useState<string | null>(null);
 
@@ -993,10 +1006,10 @@ export default function App() {
 
     return candles
       .map((c) => {
-        const sig = byTs.get(c.ts);
+        const sig = byTs.get(c.time);
         if (!sig || sig.signal !== "long") return null;
         return {
-          ts: c.ts,
+          ts: c.time,
           side: "long",
           position: "belowBar",
           text: `AI ${Math.round(sig.confidence * 100)}%`,
