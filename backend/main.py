@@ -616,6 +616,8 @@ async def run_backtest_endpoint(
                 status_code=500,
                 detail=f"Failed to load candles: {exc}",
             ) from exc
+    empty_note: Optional[str] = None
+
     elif provider == "alpaca":
         try:
             df = await fetch_alpaca_bars(symbol, interval, limit=1000)
@@ -633,10 +635,7 @@ async def run_backtest_endpoint(
             ) from exc
 
         if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="No candles returned by Alpaca for backtest.",
-            )
+            empty_note = "No Alpaca bars available for the requested window."
     else:
         try:
             # limit=1000 is a reasonable default; tune later if needed
@@ -648,10 +647,7 @@ async def run_backtest_endpoint(
             ) from exc
 
         if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="No candles returned by Binance for backtest.",
-            )
+            empty_note = "No candles returned by Binance for backtest."
 
     indicator_specs: List[IndicatorSpec] = req.indicators or []
     if indicator_specs:
@@ -664,6 +660,12 @@ async def run_backtest_endpoint(
                 status_code=500,
                 detail=f"Indicator calculation failed: {exc}",
             ) from exc
+
+    if df.empty:
+        return _build_empty_backtest_response(
+            starting_balance=starting_balance,
+            note=empty_note or "No candles available for the requested window.",
+        )
 
     # 2) Pull TP / SL with defaults
     tp = params.tp if params and params.tp is not None else 100
@@ -712,4 +714,23 @@ async def run_backtest_endpoint(
 
     return response
 
+
+def _build_empty_backtest_response(
+    starting_balance: float,
+    note: str,
+) -> BacktestResponse:
+    empty_summary = BacktestSummary(
+        starting_balance=float(starting_balance),
+        ending_balance=float(starting_balance),
+        total_pnl=0.0,
+        win_pct=0.0,
+        max_drawdown=0.0,
+        sharpe_ratio=0.0,
+    )
+    return BacktestResponse(
+        summary=empty_summary,
+        equity_curve=[],
+        trades=[],
+        note=note,
+    )
 

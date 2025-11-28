@@ -175,6 +175,7 @@ class BacktestResponse(BaseModel):
     summary: BacktestSummary
     equity_curve: List[EquityPoint]
     trades: list[Trade] = []
+    note: Optional[str] = None
 
 
 TradingMode = Literal["backtest", "paper", "live"]

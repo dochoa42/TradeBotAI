@@ -43,6 +43,7 @@ export type BacktestResponse = {
   summary: BacktestSummary;
   equity_curve: EquityPoint[];
   trades: Trade[];
+  note?: string;
 };
 
 export type MultiChartState = {

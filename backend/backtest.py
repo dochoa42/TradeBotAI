@@ -28,7 +28,28 @@ def load_candles_dataframe(
     candles = candle_provider.get_candles(symbol, interval, limit)
     if not candles:
         raise ValueError("No candles returned by provider")
-    return pd.DataFrame(candles, columns=["ts", "open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(candles, columns=["ts", "open", "high", "low", "close", "volume"])
+    return _ensure_ts_millis(df)
+
+
+def _ensure_ts_millis(df: pd.DataFrame) -> pd.DataFrame:
+    if "ts" not in df.columns:
+        raise ValueError("Candles missing 'ts' column")
+
+    ts = df["ts"]
+    if pd.api.types.is_datetime64_any_dtype(ts):
+        df["ts"] = (ts.view("int64") // 1_000_000).astype("int64")
+        return df
+
+    try:
+        df["ts"] = pd.to_numeric(ts, errors="raise").astype("int64")
+        return df
+    except Exception:
+        converted = pd.to_datetime(ts, errors="coerce")
+        if converted.isna().any():
+            raise ValueError("Unable to normalize timestamps")
+        df["ts"] = (converted.view("int64") // 1_000_000).astype("int64")
+        return df
 
 
 def _side_label(position: int) -> str:
@@ -252,6 +273,9 @@ def bollinger_backtest(
     """
 
     df = candles.copy().reset_index(drop=True)
+    df = _ensure_ts_millis(df)
+    if df.empty:
+        return [], pd.Series(dtype=float)
 
     close = df["close"].astype(float)
     sma20 = close.rolling(20).mean()
