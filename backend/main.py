@@ -36,7 +36,7 @@ from models import (
 from binance_client import fetch_klines
 from alpaca_client import fetch_alpaca_bars
 from model_service import predict_signals_from_candles
-from backtest import bollinger_backtest, load_candles_dataframe
+from backtest import load_candles_dataframe, run_strategy_backtest
 from candle_adapters import (
     from_alpaca_bars,
     from_binance_klines,
@@ -602,6 +602,7 @@ async def run_backtest_endpoint(
         req.starting_balance if req.starting_balance is not None else DEFAULT_STARTING_BALANCE
     )
     fee_pct = req.fee if req.fee is not None else 0.0004
+    risk_pct = req.risk_per_trade_percent if req.risk_per_trade_percent is not None else 1.0
 
     empty_note: Optional[str] = None
 
@@ -672,13 +673,17 @@ async def run_backtest_endpoint(
     sl = params.sl if params and params.sl is not None else 50
 
     # 3) Run Bollinger backtest directly on candles
-    trades_list, equity_series = bollinger_backtest(
+    selected_strategy = getattr(req, "strategy", "bollinger") or "bollinger"
+
+    trades_list, equity_series = run_strategy_backtest(
+        strategy=selected_strategy,
         candles=df,
         tp_pct=tp,
         sl_pct=sl,
         initial_equity=starting_balance,
         fee_pct=fee_pct,
         symbol=symbol,
+        risk_pct=risk_pct,
     )
 
     equity_curve = _equity_curve_from_series(df, equity_series)

@@ -825,6 +825,7 @@ export default function App() {
         risk_per_trade_percent: riskPerTradePct,
         max_daily_loss_percent: maxDailyLossPct,
         indicators: indicatorsForBackend,
+        strategy: "bollinger",
       };
 
       const res = await fetch(

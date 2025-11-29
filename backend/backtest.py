@@ -5,13 +5,14 @@ Simple vector-ish backtester to pair with model signals.
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 
 from models import Trade as TradeModel
 from data_providers import CandleProvider, CsvCandleProvider
+from model_service import predict_signals_from_candles
 
 Trade = TradeModel  # re-export for code that imports Trade from this module
 
@@ -406,7 +407,221 @@ def bollinger_backtest(
                 pnl=pnl,
                 max_drawdown=max_drawdown,
             )
+    )
+
+    equity_series = pd.Series(equity_vals, index=range(len(equity_vals)))
+    return trades, equity_series
+
+
+StrategyFn = Callable[
+    [pd.DataFrame, float, float, float, float, float, str, dict[str, Any] | None],
+    Tuple[List[TradeModel], pd.Series],
+]
+
+
+def _bollinger_strategy_entry(
+    candles: pd.DataFrame,
+    tp_pct: float,
+    sl_pct: float,
+    initial_equity: float,
+    fee_pct: float,
+    risk_pct: float,
+    symbol: str,
+    strategy_params: dict[str, Any] | None = None,
+) -> Tuple[List[TradeModel], pd.Series]:
+    return bollinger_backtest(
+        candles=candles,
+        tp_pct=tp_pct,
+        sl_pct=sl_pct,
+        initial_equity=initial_equity,
+        fee_pct=fee_pct,
+        symbol=symbol,
+    )
+
+
+def _alpha_model_strategy(
+    candles: pd.DataFrame,
+    tp_pct: float,
+    sl_pct: float,
+    initial_equity: float,
+    fee_pct: float,
+    risk_pct: float,
+    symbol: str,
+    strategy_params: dict[str, Any] | None = None,
+) -> Tuple[List[TradeModel], pd.Series]:
+    df = candles.copy().reset_index(drop=True)
+    df = _ensure_ts_millis(df)
+    if df.empty:
+        return [], pd.Series(dtype=float)
+
+    try:
+        raw_signals, _meta = predict_signals_from_candles(df)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Alpha model files missing: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Alpha model prediction failed: {exc}") from exc
+
+    signal_map = {
+        int(entry.get("ts", 0)): int(entry.get("signal", 0))
+        for entry in raw_signals
+        if isinstance(entry, dict) and "ts" in entry
+    }
+    if not signal_map:
+        return [], pd.Series(dtype=float)
+
+    params = strategy_params or {}
+    long_value = int(params.get("long_signal_value", 1))
+    short_value = int(params.get("short_signal_value", -1))
+    enable_shorts = bool(params.get("enable_shorts", False))
+    auto_exit_on_flip = bool(params.get("auto_exit_on_flip", True))
+
+    min_confidence = float(params.get("min_confidence", 0.0))
+    confidence_map: Dict[int, float] = {
+        int(entry.get("ts", 0)): float(entry.get("confidence", 0.0))
+        for entry in raw_signals
+        if isinstance(entry, dict) and "ts" in entry
+    }
+
+    tp = tp_pct / 100.0
+    sl = sl_pct / 100.0
+
+    equity_vals = [initial_equity]
+    trades: List[TradeModel] = []
+
+    position = 0
+    entry_price: float | None = None
+    entry_ts: int | None = None
+    position_qty: float | None = None
+    max_drawdown: float | None = None
+    trade_id = 1
+
+    for i in range(len(df)):
+        price = float(df.loc[i, "close"])
+        ts = int(df.loc[i, "ts"])
+        raw_signal = int(signal_map.get(ts, 0))
+        confidence = confidence_map.get(ts, 0.0)
+
+        if confidence < min_confidence:
+            target_position = 0
+        elif raw_signal == long_value:
+            target_position = 1
+        elif enable_shorts and raw_signal == short_value:
+            target_position = -1
+        else:
+            target_position = 0
+
+        reentry_target = target_position
+
+        if position != 0 and entry_price is not None:
+            max_drawdown = _update_drawdown(
+                max_drawdown, position, entry_price, price, position_qty
+            )
+            ret = (price / entry_price - 1.0) * position
+            hit_tp = ret >= tp
+            hit_sl = ret <= -sl
+            signal_exit = auto_exit_on_flip and target_position != position
+
+            if hit_tp or hit_sl or signal_exit:
+                gross_pnl = ret * initial_equity
+                fee = abs(gross_pnl) * fee_pct
+                pnl = gross_pnl - fee
+
+                equity_vals.append(equity_vals[-1] + pnl)
+                qty = position_qty if position_qty is not None else 0.0
+                trades.append(
+                    _make_trade(
+                        trade_id=trade_id,
+                        symbol=symbol,
+                        position=position,
+                        entry_ts=int(entry_ts) if entry_ts is not None else ts,
+                        exit_ts=ts,
+                        entry_price=float(entry_price),
+                        exit_price=price,
+                        qty=qty,
+                        pnl=pnl,
+                        max_drawdown=max_drawdown,
+                    )
+                )
+                trade_id += 1
+                position = 0
+                entry_price = None
+                entry_ts = None
+                position_qty = None
+                max_drawdown = None
+
+                if not signal_exit:
+                    reentry_target = 0
+            else:
+                equity_vals.append(equity_vals[-1])
+        else:
+            equity_vals.append(equity_vals[-1])
+
+        if position == 0 and reentry_target != 0:
+            position = reentry_target
+            entry_price = price
+            entry_ts = ts
+            position_qty = _position_qty(initial_equity, entry_price)
+            max_drawdown = 0.0
+
+    if position != 0 and entry_price is not None and entry_ts is not None:
+        price = float(df.loc[len(df) - 1, "close"])
+        ts = int(df.loc[len(df) - 1, "ts"])
+        max_drawdown = _update_drawdown(
+            max_drawdown, position, entry_price, price, position_qty
+        )
+        ret = (price / entry_price - 1.0) * position
+
+        gross_pnl = ret * initial_equity
+        fee = abs(gross_pnl) * fee_pct
+        pnl = gross_pnl - fee
+
+        equity_vals.append(equity_vals[-1] + pnl)
+        qty = position_qty if position_qty is not None else 0.0
+        trades.append(
+            _make_trade(
+                trade_id=trade_id,
+                symbol=symbol,
+                position=position,
+                entry_ts=int(entry_ts),
+                exit_ts=ts,
+                entry_price=float(entry_price),
+                exit_price=price,
+                qty=qty,
+                pnl=pnl,
+                max_drawdown=max_drawdown,
+            )
         )
 
     equity_series = pd.Series(equity_vals, index=range(len(equity_vals)))
     return trades, equity_series
+
+
+STRATEGIES: Dict[str, StrategyFn] = {
+    "bollinger": _bollinger_strategy_entry,
+    "alpha_model": _alpha_model_strategy,
+}
+
+
+def run_strategy_backtest(
+    strategy: str,
+    candles: pd.DataFrame,
+    tp_pct: float,
+    sl_pct: float,
+    initial_equity: float,
+    fee_pct: float,
+    symbol: str,
+    risk_pct: float,
+    strategy_params: dict[str, Any] | None = None,
+) -> Tuple[List[TradeModel], pd.Series]:
+    key = (strategy or "bollinger").lower()
+    strategy_fn = STRATEGIES.get(key, STRATEGIES["bollinger"])
+    return strategy_fn(
+        candles,
+        tp_pct,
+        sl_pct,
+        initial_equity,
+        fee_pct,
+        risk_pct,
+        symbol,
+        strategy_params,
+    )

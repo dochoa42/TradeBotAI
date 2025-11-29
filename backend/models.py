@@ -104,6 +104,8 @@ class BacktestRequest(BaseModel):
     symbol: str
     interval: str
     strategy_name: Optional[str] = None
+    strategy: Literal["bollinger", "rsi", "macd", "alpha_model"] = "bollinger"
+    strategy_params: Dict[str, Any] = Field(default_factory=dict)
     params: Optional[BacktestParams] = None  # use the real model
 
     # Account & risk controls

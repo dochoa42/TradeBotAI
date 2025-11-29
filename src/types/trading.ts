@@ -4,6 +4,8 @@ export type DataProvider = "csv" | "api" | "alpaca";
 
 export type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 
+export type StrategyId = "bollinger" | "rsi" | "macd" | "alpha_model";
+
 export type EquityPoint = {
   ts: number;
   equity: number;
@@ -38,6 +40,24 @@ export type BacktestSummary = {
   max_drawdown: number;
   sharpe_ratio: number;
 };
+
+export interface BacktestRequest {
+  symbol: string;
+  interval: Interval;
+  params: {
+    thr: number;
+    tp: number;
+    sl: number;
+    walkForward?: boolean;
+  };
+  starting_balance?: number;
+  fee?: number;
+  risk_per_trade_percent?: number;
+  max_daily_loss_percent?: number;
+  indicators?: any[];
+  strategy?: StrategyId;
+  strategy_params?: any;
+}
 
 export type BacktestResponse = {
   summary: BacktestSummary;
