@@ -603,6 +603,8 @@ async def run_backtest_endpoint(
     )
     fee_pct = req.fee if req.fee is not None else 0.0004
 
+    empty_note: Optional[str] = None
+
     # 1) Load candles via the selected provider
     if provider == "csv":
         try:
@@ -616,8 +618,6 @@ async def run_backtest_endpoint(
                 status_code=500,
                 detail=f"Failed to load candles: {exc}",
             ) from exc
-    empty_note: Optional[str] = None
-
     elif provider == "alpaca":
         try:
             df = await fetch_alpaca_bars(symbol, interval, limit=1000)
